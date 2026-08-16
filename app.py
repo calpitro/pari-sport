@@ -288,7 +288,7 @@ if sport_choice == "⚽ Football (QuantBet Pro)":
                             prefix = "🔥" if row["Expected Value (EV)"] > 0 else "📌"
                             st.write(f"{prefix} **{row['Marché']}** @ **{row['Cote Bookie']}**")
                         with col_v2:
-                            user_stake = st.number_input(f"Mise (€)", min_value=1.0, value=10.0, step=5.0, key=f"input_{home_team}_{row['Marché']}")
+                            user_stake = st.number_input("Mise (€)", min_value=1.0, value=10.0, step=5.0, key=f"input_{home_team}_{row['Marché']}")
                         with col_v3:
                             closing_cote = st.number_input("Cote Clôture (CLV)", min_value=1.01, value=float(row['Cote Bookie']), step=0.05, key=f"clv_{home_team}_{row['Marché']}")
                         with col_v4:
@@ -398,4 +398,68 @@ elif sport_choice == "🎾 Tennis (Automatique & Aces)":
             with tab_match:
                 data_tennis = [
                     {"Joueur": p1, "Probabilité Modélisée": prob_est_p1, "Cote Bookie": cote_p1},
-                    {"Joueur": p2, "Probabilité Modélisée": prob_est_p2, "Cote B
+                    {"Joueur": p2, "Probabilité Modélisée": prob_est_p2, "Cote Bookie": cote_p2}
+                ]
+                df_t = pd.DataFrame(data_tennis)
+                df_t["Cote Équitable"] = df_t["Probabilité Modélisée"].apply(lambda x: round(1 / x, 2) if x > 0 else 99)
+                df_t["Expected Value (EV)"] = (df_t["Probabilité Modélisée"] * df_t["Cote Bookie"]) - 1.0
+
+                df_t_disp = df_t.copy()
+                df_t_disp["Probabilité Modélisée"] = df_t_disp["Probabilité Modélisée"].apply(lambda x: f"{round(x*100, 1)}%")
+                df_t_disp["Expected Value (EV)"] = df_t_disp["Expected Value (EV)"].apply(lambda x: f"{'+' if x>0 else ''}{round(x*100, 1)}%")
+                st.dataframe(df_t_disp, use_container_width=True, hide_index=True)
+
+            with tab_aces:
+                st.markdown("#### ⚡ Analyse Automatique du Marché des Aces")
+                surface_multiplier = 1.35 if surface_choice == "Gazon (Grass)" else (1.15 if surface_choice == "Dur (Hard)" else 0.75)
+                
+                aces_attendus_p1 = round(7.0 * surface_multiplier * (form_p1 / 3.0), 1)
+                aces_attendus_p2 = round(6.0 * surface_multiplier * (form_p2 / 3.0), 1)
+
+                col_ac1, col_ac2 = st.columns(2)
+                with col_ac1:
+                    st.info(f"**{p1}**")
+                    st.write(f"• Aces modélisés : **{aces_attendus_p1}**")
+                    ev_aces_p1 = (0.55 * 1.85) - 1.0
+                    st.write(f"• EV Over Aces : `{round(ev_aces_p1*100, 1)}%`")
+                with col_ac2:
+                    st.info(f"**{p2}**")
+                    st.write(f"• Aces modélisés : **{aces_attendus_p2}**")
+                    ev_aces_p2 = (0.55 * 1.85) - 1.0
+                    st.write(f"• EV Over Aces : `{round(ev_aces_p2*100, 1)}%`")
+
+            with tab_bet:
+                st.markdown("**🎯 Valider et Enregistrer le Pari**")
+                pari_choisi = st.selectbox("Choisir le marché :", [f"Victoire {p1}", f"Victoire {p2}", f"Over Aces ({p1})", f"Over Aces ({p2})"], key=f"pari_t_{p1}")
+                cote_retenue = cote_p1 if pari_choisi == f"Victoire {p1}" else (cote_p2 if pari_choisi == f"Victoire {p2}" else 1.85)
+                
+                col_s1, col_s2 = st.columns(2)
+                with col_s1:
+                    mise_tennis = st.number_input("Mise (€)", min_value=1.0, value=10.0, step=5.0, key=f"stake_t_{p1}")
+                with col_s2:
+                    closing_tennis = st.number_input("Cote Clôture (CLV)", min_value=1.01, value=float(cote_retenue), step=0.05, key=f"clv_t_{p1}")
+
+                if st.button("Valider le pari Tennis", key=f"btn_t_{p1}"):
+                    st.session_state.historique_paris.append({
+                        "Mois": selected_month,
+                        "Match": f"{p1} vs {p2}",
+                        "Pari": pari_choisi,
+                        "Cote Prise": cote_retenue,
+                        "Cote Clôture": closing_tennis,
+                        "Mise": mise_tennis
+                    })
+                    st.success("Pari tennis enregistré avec succès dans le suivi global !")
+
+# ==========================================
+# HISTORIQUE GLOBAL DES PARIS DU MOIS
+# ==========================================
+st.markdown("---")
+st.subheader(f"📋 Suivi Global des Paris du Mois : {selected_month}")
+paris = [p for p in st.session_state.historique_paris if p["Mois"] == selected_month]
+if paris:
+    st.dataframe(pd.DataFrame(paris), use_container_width=True, hide_index=True)
+    if st.button("🗑️ Effacer l'historique du mois"):
+        st.session_state.historique_paris = [p for p in st.session_state.historique_paris if p["Mois"] != selected_month]
+        st.rerun()
+else:
+    st.info("Aucun pari validé pour l'instant ce mois-ci.")
