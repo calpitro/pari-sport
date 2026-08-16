@@ -39,8 +39,6 @@ bankroll_initiale = st.sidebar.number_input(
     f"Capital initial pour {selected_month} (€) :", min_value=10.0, value=500.0, step=50.0
 )
 
-min_ev_threshold = st.sidebar.slider("Seuil EV minimum (%) :", 0.0, 15.0, 2.0, 0.5) / 100.0
-
 st.sidebar.markdown("---")
 st.sidebar.header("🏆 Compétitions & Coupes")
 
@@ -103,6 +101,7 @@ def fetch_rapidapi_stats(team_name, api_key):
 
 @st.cache_data(ttl=1800)
 def fetch_odds_data(s_key, api_k):
+    # Filtrage axé sur les bookmakers européens/français disponibles (ex: winamax, unibet, pmu si couverts par l'API)
     url = f"https://api.the-odds-api.com/v4/sports/{s_key}/odds/?apiKey={api_k}&regions=eu&markets=h2h,totals&oddsFormat=decimal"
     try:
         res = requests.get(url)
@@ -127,24 +126,24 @@ st.markdown("---")
 odds_key_target = competition_map_odds.get(competition_choice, "soccer_france_ligue_one")
 matches = fetch_odds_data(odds_key_target, ODDS_API_KEY)
 
-# Injection forcée du Trophée des Champions si sélectionné (pour s'assurer de le voir ce soir)
+# Injection forcée du Trophée des Champions avec les cotes réelles du marché français (Winamax)
 if "Trophée des Champions" in competition_choice:
-    match_trophhee = {
+    match_trophee = {
         "home_team": "RC Lens",
         "away_team": "Paris Saint-Germain",
         "bookmakers": [{
-            "title": "Winamax",
+            "title": "Winamax (FR)",
             "markets": [{
                 "key": "h2h",
                 "outcomes": [
-                    {"name": "RC Lens", "price": 3.80},
-                    {"name": "Draw", "price": 3.50},
-                    {"name": "Paris Saint-Germain", "price": 1.95}
+                    {"name": "RC Lens", "price": 4.90},
+                    {"name": "Draw", "price": 4.10},
+                    {"name": "Paris Saint-Germain", "price": 1.64}
                 ]
             }]
         }]
     }
-    matches = [match_trophhee] + matches
+    matches = [match_trophee] + matches
 
 if not matches:
     st.error(f"Aucun match disponible pour {competition_choice}.")
@@ -153,7 +152,12 @@ else:
     for match in matches:
         home_team, away_team = match["home_team"], match["away_team"]
 
-        h2h = next((m for m in match.get("bookmakers", [{}])[0].get("markets", []) if m["key"] == "h2h"), None)
+        # Récupération de l'éditeur de cote (priorité aux bookmakers français/européens si présents)
+        bookmakers = match.get("bookmakers", [{}])
+        selected_bm = next((b for b in bookmakers if "winamax" in b.get("title", "").lower() or "unibet" in b.get("title", "").lower() or "betclic" in b.get("title", "").lower()), bookmakers[0])
+        bm_title = selected_bm.get("title", "Bookmaker")
+        
+        h2h = next((m for m in selected_bm.get("markets", []) if m["key"] == "h2h"), None)
         if not h2h: continue
 
         cote_1 = next((i["price"] for i in h2h["outcomes"] if i["name"] == home_team), 1.0)
@@ -167,7 +171,7 @@ else:
         matrix = build_bivariate_poisson_matrix(xg_home, xg_away)
         prob_1, prob_N, prob_2 = float(np.sum(np.tril(matrix, -1))), float(np.sum(np.diag(matrix))), float(np.sum(np.triu(matrix, 1)))
 
-        with st.expander(f"⚽ {home_team} vs {away_team}", expanded=True):
+        with st.expander(f"⚽ {home_team} vs {away_team} ({bm_title})", expanded=False):
             st.write(f"📊 **xG Calculés :** `{xg_home}` vs `{xg_away}`")
             
             data = [
@@ -186,30 +190,29 @@ else:
             st.dataframe(df_disp[["Marché", "Probabilité", "Cote Équitable", "Cote Bookie", "Expected Value (EV)"]], use_container_width=True, hide_index=True)
 
             st.markdown("---")
-            st.markdown("**🎯 Actions (Saisie manuelle de la mise)**")
-            val_bets = df[df["Expected Value (EV)"] >= min_ev_threshold]
-            if len(val_bets) == 0:
-                st.info("Aucune valeur détectée sur ce match selon le seuil EV.")
-            else:
-                for _, row in val_bets.iterrows():
-                    ev_pct = round(row["Expected Value (EV)"] * 100, 1)
-                    col_v1, col_v2, col_v3 = st.columns([2, 1, 1])
-                    with col_v1:
-                        st.success(f"🔥 **{row['Marché']}** @ **{row['Cote Bookie']}** | Value : **+{ev_pct}%**")
-                    with col_v2:
-                        user_stake = st.number_input(f"Mise (€) pour {row['Marché']}", min_value=1.0, value=10.0, step=5.0, key=f"input_{home_team}_{row['Marché']}")
-                    with col_v3:
-                        st.markdown("<br>", unsafe_allow_html=True)
-                        bet_id = f"{home_team}-{away_team}-{row['Marché']}"
-                        if st.button("Valider ce pari", key=bet_id):
-                            st.session_state.historique_paris.append({
-                                "Mois": selected_month, 
-                                "Match": f"{home_team} vs {away_team}", 
-                                "Pari": row['Marché'], 
-                                "Cote": row['Cote Bookie'], 
-                                "Mise": user_stake
-                            })
-                            st.rerun()
+            st.markdown("**🎯 Validation & Saisie de la mise**")
+            
+            # Affichage direct de tous les marchés sans filtre EV
+            for _, row in df.iterrows():
+                ev_pct = round(row["Expected Value (EV)"] * 100, 1)
+                col_v1, col_v2, col_v3 = st.columns([2, 1, 1])
+                with col_v1:
+                    prefix = "🔥" if row["Expected Value (EV)"] > 0 else "📌"
+                    st.write(f"{prefix} **{row['Marché']}** @ **{row['Cote Bookie']}** (EV : {'+' if ev_pct>0 else ''}{ev_pct}%)")
+                with col_v2:
+                    user_stake = st.number_input(f"Mise (€)", min_value=1.0, value=10.0, step=5.0, key=f"input_{home_team}_{row['Marché']}")
+                with col_v3:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    bet_id = f"{home_team}-{away_team}-{row['Marché']}"
+                    if st.button("Valider", key=bet_id):
+                        st.session_state.historique_paris.append({
+                            "Mois": selected_month, 
+                            "Match": f"{home_team} vs {away_team}", 
+                            "Pari": row['Marché'], 
+                            "Cote": row['Cote Bookie'], 
+                            "Mise": user_stake
+                        })
+                        st.rerun()
 
 # ==========================================
 # HISTORIQUE DES PARIS DU MOIS
