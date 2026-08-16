@@ -83,7 +83,7 @@ else:
         if matches:
             all_matches.extend(matches)
 
-# FALLBACK : Match de secours si l'API est vide pour le Trophée des Champions
+# FALLBACK FOOTBALL
 if not all_matches and sport_choice == "Football" and "Trophée des Champions" in league_choice:
     all_matches = [{
         'home_team': 'Lens',
@@ -98,27 +98,30 @@ if not all_matches and sport_choice == "Football" and "Trophée des Champions" i
         }]
     }]
 
+# --- BASE DE DONNÉES TENNIS RATIO (GROS SERVEURS ET MOYENNES) ---
+SERVEURS_TOP = {
+    "Isner": 18, "Opelka": 17, "Karlovic": 19, "Hurkacz": 14, "Berrettini": 12,
+    "Raonic": 15, "Kyrgios": 13, "Bublik": 12, "Zverev": 10, "Medvedev": 9,
+    "Fritz": 11, "Shelton": 14, "Cilic": 12, "Khachanov": 9, "Tsitsipas": 9,
+    "Sinner": 8, "Alcaraz": 5, "Djokovic": 7, "Rune": 7, "Monfils": 8
+}
+
 def analyser_rencontre(equipe_home, equipe_away, sport, cote_home, cote_away):
-    # Hash déterministe pour stabiliser les résultats
     seed_value = abs(hash(equipe_home + equipe_away)) % (2**32)
     np.random.seed(seed_value)
     
-    # Calcul des probabilités basées sur le marché réel
     prob_mkt_home = 1 / cote_home
     prob_mkt_away = 1 / cote_away
     
     stats = {}
     
     if sport == "Football":
-        # Forme déduite des cotes
         stats["forme_home"] = round(min(max(prob_mkt_home * 10 + 2.0, 3.0), 9.5), 1)
         stats["forme_away"] = round(min(max(prob_mkt_away * 10 + 2.0, 3.0), 9.5), 1)
         
         stats["btts_prob"] = round(0.50 + (0.10 if abs(cote_home - cote_away) < 1.0 else -0.05), 2)
         stats["over_1_5_prob"] = round(0.75 + (0.05 if (cote_home + cote_away) < 5.0 else -0.05), 2)
-        stats["over_2_5_prob"] = round(0.50 + (0.08 if (cote_home + cote_away) < 4.0 else -0.05), 2)
         
-        # Buteurs potentiels (sans terme générique)
         buteurs_db = {
             "Paris SG": ("Ousmane Dembélé", 2.20),
             "Lens": ("Florian Sotoca", 3.40),
@@ -128,16 +131,16 @@ def analyser_rencontre(equipe_home, equipe_away, sport, cote_home, cote_away):
             "Arsenal": ("Bukayo Saka", 2.50)
         }
         
-        buteur_h = buteurs_db.get(equipe_home, (f"Buteur Principal ({equipe_home})", 2.60))
-        buteur_a = buteurs_db.get(equipe_away, (f"Buteur Principal ({equipe_away})", 2.80))
+        buteur_h = buteurs_db.get(equipe_home, (f"Meilleur Buteur ({equipe_home})", 2.50))
+        buteur_a = buteurs_db.get(equipe_away, (f"Meilleur Buteur ({equipe_away})", 2.70))
         
         stats["buteur_home"] = f"{buteur_h[0]} @ {buteur_h[1]}"
         stats["buteur_away"] = f"{buteur_a[0]} @ {buteur_a[1]}"
         
         if cote_away < 1.80:
-            summary = f"💡 **Analyse :** {equipe_away} part nettement favori selon les marchés. {equipe_home} devra exploiter les contres."
+            summary = f"💡 **Analyse :** {equipe_away} part favori selon les marchés. {equipe_home} devra exploiter les contres."
         elif cote_home < 1.80:
-            summary = f"💡 **Analyse :** Advantage à domicile pour {equipe_home}. Contrôle du rythme attendu face à {equipe_away}."
+            summary = f"💡 **Analyse :** Advantage à domicile pour {equipe_home}. Contrôle du jeu attendu."
         else:
             summary = f"💡 **Analyse :** Affiche équilibrée. Profil favorable au marché des buts (Over / BTTS)."
             
@@ -146,27 +149,36 @@ def analyser_rencontre(equipe_home, equipe_away, sport, cote_home, cote_away):
         stats["forme_home"] = round(min(max(prob_mkt_home * 10 + 1.5, 3.0), 9.5), 1)
         stats["forme_away"] = round(min(max(prob_mkt_away * 10 + 1.5, 3.0), 9.5), 1)
         
-        stats["breaks_est"] = round(3.5 + (1.5 if abs(cote_home - cote_away) < 0.5 else 0.0), 1)
-        stats["sets_est"] = "2-0 / 3-0" if abs(cote_home - cote_away) > 1.2 else "2-1 / 3-2"
+        # Cross-check avec le Dictionnaire Tennis Ratio
+        aces_h_base = 6
+        aces_a_base = 6
         
-        # Aces & Paliers Winamax
-        aces_h = int(8 + (prob_mkt_home * 4))
-        aces_a = int(6 + (prob_mkt_away * 4))
-        stats["aces_home"] = aces_h
-        stats["aces_away"] = aces_a
+        for name, avg in SERVEURS_TOP.items():
+            if name.lower() in equipe_home.lower():
+                aces_h_base = avg
+            if name.lower() in equipe_away.lower():
+                aces_a_base = avg
+                
+        stats["aces_home"] = aces_h_base
+        stats["aces_away"] = aces_a_base
         
-        palier_h = max(3.5, np.floor(aces_h - 1) + 0.5)
-        palier_a = max(3.5, np.floor(aces_a - 1) + 0.5)
+        palier_h = max(3.5, np.floor(aces_h_base - 1) + 0.5)
+        palier_a = max(3.5, np.floor(aces_a_base - 1) + 0.5)
         
         stats["palier_h"] = f"Over {palier_h} Aces ({equipe_home}) @ 1.80"
-        stats["palier_a"] = f"Over {palier_a} Aces ({equipe_away}) @ 1.85"
+        stats["palier_a"] = f"Over {palier_a} Aces ({equipe_away}) @ 1.80"
         
-        if aces_h > aces_a:
+        if aces_h_base > aces_a_base:
             stats["cote_aces_fav"] = f"Plus d'aces : {equipe_home} (@ 1.55)"
+        elif aces_a_base > aces_h_base:
+            stats["cote_aces_fav"] = f"Plus d'aces : {equipe_away} (@ 1.60)"
         else:
-            stats["cote_aces_fav"] = f"Plus d'aces : {equipe_away} (@ 1.65)"
+            stats["cote_aces_fav"] = "Volume d'aces équivalent attendu"
 
-        summary = f"💡 **Analyse :** Confrontation directe entre {equipe_home} et {equipe_away}. Paliers d'Aces calés sur la puissance de service."
+        stats["breaks_est"] = round(3.5 + (1.5 if abs(cote_home - cote_away) < 0.4 else 0.0), 1)
+        stats["sets_est"] = "2-0 / 3-0" if abs(cote_home - cote_away) > 1.2 else "2-1 / 3-2"
+
+        summary = f"💡 **Analyse Tennis :** Comparatif de la puissance de service entre {equipe_home} et {equipe_away}."
         stats["summary"] = summary
         
     return stats
@@ -192,7 +204,6 @@ else:
         is_foot = (sport_choice == "Football")
         stats = analyser_rencontre(home, away, sport_choice, cote_home, cote_away)
         
-        # Probabilités ajustées (ajustement léger de +/- 2% max pour éviter les valeurs folles)
         prob_algo_home = (1 / cote_home)
         prob_algo_away = (1 / cote_away)
         
@@ -237,9 +248,16 @@ else:
                     if stats['over_1_5_prob'] <= 0.78 and stats['btts_prob'] <= 0.58:
                         st.info("Aucune Value majeure sur les marchés principaux.")
                 else:
+                    # Détection dynamique multi-marchés sur le Tennis
+                    has_value = False
                     if stats['aces_home'] >= 10:
                         st.success(f"VALUE : {stats['palier_h']}")
-                    else:
-                        st.info("Aucune Value sur les Aces détectée.")
-
-
+                        has_value = True
+                    if stats['aces_away'] >= 10:
+                        st.success(f"VALUE : {stats['palier_a']}")
+                        has_value = True
+                    if abs(cote_home - cote_away) < 0.25:
+                        st.success("VALUE : Over 2.5 Sets (Match accroché)")
+                        has_value = True
+                    if not has_value:
+                        st.info("Aucune Value majeure détectée.")
