@@ -6,7 +6,7 @@ import difflib
 
 st.set_page_config(page_title="🎯 QuantBet Auto - Football Studio", layout="wide")
 st.title("⚽ QuantBet Studio - Dashboard Football Auto")
-st.caption("Données API-Sports & The Odds API | Analyse Poisson/xG & Forme globale (Amicaux inclus)")
+st.caption("Données API-Sports & The Odds API | Analyse Poisson/xG & Mapping Direct ID")
 st.markdown("---")
 
 # --- CONFIGURATION DES CLÉS API EN SIDEBAR ---
@@ -15,7 +15,7 @@ ODDS_API_KEY = st.sidebar.text_input("Clé The Odds API :", type="password")
 API_SPORTS_KEY = st.sidebar.text_input(
     "Clé API-Sports (dashboard.api-football.com) :", 
     type="password", 
-    help="Utilisée pour récupérer les 5 derniers résultats (amicaux inclus)"
+    help="Utilisée pour récupérer les 5 derniers résultats"
 )
 
 if not ODDS_API_KEY:
@@ -48,6 +48,20 @@ league_map_odds = {
     "🇪🇺 Europe - Ligue Europa": "soccer_uefa_europa_league"
 }
 
+# --- DICTIONNAIRE D'URGENCE POUR LES IDENTIFIANTS API-SPORTS ---
+KNOWN_TEAM_IDS = {
+    # Ligue 1 / Ligue 2 France
+    "Marseille": 81, "Strasbourg": 95, "RC Lens": 116, "Auxerre": 96,
+    "USL Dunkerque": 128, "Red Star": 105, "Pau FC": 122, "Nancy": 92,
+    "Montpellier": 82, "Paris Saint Germain": 85, "PSG": 85, "Monaco": 91,
+    "Lille": 79, "Lyon": 80, "Rennes": 94, "Nice": 84, "Nantes": 83,
+    "Toulouse": 97, "Reims": 93, "Brest": 106, "Saint Etienne": 1063,
+    "Le Havre": 885, "Angers": 77, "Lorient": 99, "Metz": 112, "Clermont": 98,
+    # Premier League
+    "Arsenal": 42, "Chelsea": 49, "Liverpool": 40, "Manchester City": 50,
+    "Manchester United": 33, "Tottenham": 47, "Real Madrid": 541, "Barcelona": 529
+}
+
 # --- FONCTION : RÉCUPÉRATION COTES ---
 @st.cache_data(ttl=1800)
 def fetch_odds(s_key, api_k):
@@ -60,69 +74,71 @@ def fetch_odds(s_key, api_k):
         pass
     return []
 
-# --- FONCTION : RÉSULTATS RÉCENTS TOUTES COMPÉTITIONS (AMICAUX INCLUS) ---
+# --- FONCTION : RESOLUTION DE L'ID DE L'EQUIPE ---
+def resolve_team_id(team_name, api_key):
+    # 1. Vérification dans la table connue
+    for known_name, t_id in KNOWN_TEAM_IDS.items():
+        if known_name.lower() in team_name.lower() or team_name.lower() in known_name.lower():
+            return t_id, known_name
+            
+    # 2. Requête API directe si absent de la table
+    if not api_key:
+        return None, team_name
+        
+    headers = {"x-apisports-key": api_key}
+    clean_name = team_name.replace("USL ", "").replace("FC ", "").replace("AS ", "").replace("RC ", "").strip()
+    search_url = f"https://v3.football.api-sports.io/teams?search={clean_name}"
+    
+    try:
+        res = requests.get(search_url, headers=headers).json()
+        if res.get("response"):
+            return res["response"][0]["team"]["id"], res["response"][0]["team"]["name"]
+    except Exception:
+        pass
+        
+    return None, team_name
+
+# --- FONCTION : 5 DERNIERS MATCHS FIABLES ---
 @st.cache_data(ttl=3600)
-def get_team_all_matches_global(team_name, api_key):
+def get_team_last_5_results_robust(team_name, api_key):
     if not api_key:
         return {"v": 2, "n": 2, "d": 1, "status": "Simulé (Pas de clé API-Sports)"}
 
+    team_id, resolved_name = resolve_team_id(team_name, api_key)
+    
+    if not team_id:
+        return {"v": 2, "n": 2, "d": 1, "status": f"Non trouvé ({team_name})"}
+
     headers = {"x-apisports-key": api_key}
     
-    # Nettoyage pour maximiser la recherche globale
-    clean_name = (
-        team_name.replace("USL ", "")
-        .replace("FC ", "")
-        .replace("AS ", "")
-        .replace(" Olympique", "")
-        .replace("Olympique ", "")
-        .strip()
-    )
-    
-    try:
-        # 1. Recherche ID Équipe globale
-        search_url = f"https://v3.football.api-sports.io/teams?search={clean_name}"
-        res_team = requests.get(search_url, headers=headers).json()
-        
-        # Fallback sur le premier mot
-        if not res_team.get("response"):
-            first_word = clean_name.split()[0] if clean_name else team_name
-            search_url = f"https://v3.football.api-sports.io/teams?search={first_word}"
-            res_team = requests.get(search_url, headers=headers).json()
-
-        if not res_team.get("response"):
-            return {"v": 2, "n": 2, "d": 1, "status": f"Non trouvé ({team_name})"}
+    # Récupération sur les saisons 2024 et 2025 pour couvrir les amicals et trêves
+    for season in [2024, 2025, 2023]:
+        fixtures_url = f"https://v3.football.api-sports.io/fixtures?team={team_id}&season={season}&last=5"
+        try:
+            res_fix = requests.get(fixtures_url, headers=headers).json()
+            match_list = res_fix.get("response", [])
             
-        team_id = res_team["response"][0]["team"]["id"]
-        found_name = res_team["response"][0]["team"]["name"]
-
-        # 2. Récupération des 5 derniers matchs SANS filtre de ligue ni de saison (Amicaux inclus)
-        fixtures_url = f"https://v3.football.api-sports.io/fixtures?team={team_id}&last=5"
-        res_fix = requests.get(fixtures_url, headers=headers).json()
-        
-        v, n, d = 0, 0, 0
-        match_list = res_fix.get("response", [])
-        
-        if not match_list:
-            return {"v": 2, "n": 2, "d": 1, "status": f"Aucun match ({found_name})"}
-
-        for m in match_list:
-            gh = m["goals"]["home"]
-            ga = m["goals"]["away"]
-            is_home = m["teams"]["home"]["id"] == team_id
+            if match_list:
+                v, n, d = 0, 0, 0
+                for m in match_list:
+                    gh = m["goals"]["home"]
+                    ga = m["goals"]["away"]
+                    is_home = m["teams"]["home"]["id"] == team_id
+                    
+                    if gh is None or ga is None:
+                        continue
+                        
+                    if gh == ga:
+                        n += 1
+                    elif (is_home and gh > ga) or (not is_home and ga > gh):
+                        v += 1
+                    else:
+                        d += 1
+                return {"v": v, "n": n, "d": d, "status": f"Auto ({resolved_name})"}
+        except Exception:
+            continue
             
-            if gh is None or ga is None:
-                continue
-                
-            if gh == ga:
-                n += 1
-            elif (is_home and gh > ga) or (not is_home and ga > gh):
-                v += 1
-            else:
-                d += 1
-                
-        return {"v": v, "n": n, "d": d, "status": f"Auto ({found_name})"}
-    except Exception:
-        return {"v": 2, "n": 2, "d": 1, "status": "Erreur connexion"}
+    return {"v": 2, "n": 2, "d": 1, "status": f"Aucun match ({resolved_name})"}
 
 def calculer_note_forme(v, n, d, est_domicile=True):
     pts = (v * 3) + (n * 1)
@@ -150,9 +166,9 @@ else:
         cote_home = next((item['price'] for item in markets if item['name'] == home), 1.0)
         cote_away = next((item['price'] for item in markets if item['name'] == away), 1.0)
         
-        # Récupération globale (Amicaux + Officiels)
-        data_h = get_team_all_matches_global(home, API_SPORTS_KEY)
-        data_a = get_team_all_matches_global(away, API_SPORTS_KEY)
+        # Récupération robuste avec ID direct + Fallback
+        data_h = get_team_last_5_results_robust(home, API_SPORTS_KEY)
+        data_a = get_team_last_5_results_robust(away, API_SPORTS_KEY)
         
         note_h = calculer_note_forme(data_h["v"], data_h["n"], data_h["d"], est_domicile=True)
         note_a = calculer_note_forme(data_a["v"], data_a["n"], data_a["d"], est_domicile=False)
