@@ -5,26 +5,26 @@ import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="QuantBet Pro - Winamax Multi-Championnats",
+    page_title="QuantBet Pro - Multi-Championnats",
     page_icon="⚽",
     layout="wide",
 )
 
-st.title("⚽ QuantBet Pro - Quantitative Engine & Winamax Odds")
+st.title("⚽ QuantBet Pro - Quantitative Engine")
 st.caption(
-    "Multi-Championnats | Cotes Winamax (API) | Modélisation Dixon-Coles /"
+    "Multi-Championnats | Cotes Auto (Winamax/EU) | Modélisation Dixon-Coles /"
     " Poisson | Kelly Criterion"
 )
 st.markdown("---")
 
 
-# --- FONCTION MATHÉMATIQUE POISSON NATIF ---
+# --- POISSON NATIF ---
 def poisson_pmf(k, lamb):
   return (lamb**k * math.exp(-lamb)) / math.factorial(k)
 
 
 # ==========================================
-# SIDEBAR - CONFIGURATION & BANKROLL
+# SIDEBAR
 # ==========================================
 st.sidebar.header("🔑 Clé API & Bankroll")
 ODDS_API_KEY = st.sidebar.text_input("Clé The Odds API :", type="password")
@@ -86,20 +86,16 @@ dixon_coles_corr = st.sidebar.slider(
 )
 
 if not ODDS_API_KEY:
-  st.warning(
-      "👈 Veuillez entrer votre clé The Odds API dans le panneau de gauche"
-      " pour charger les matchs et les cotes Winamax."
-  )
+  st.warning("👈 Insère ta clé API dans le menu à gauche.")
   st.stop()
 
 
 # ==========================================
-# FONCTIONS MOTEUR QUANTITATIF
+# FETCH DATA SANS FILTRE TROP STRICT
 # ==========================================
 @st.cache_data(ttl=1800)
-def fetch_winamax_odds(s_key, api_k):
-  """Récupère les cotes Winamax (markets: h2h, totals) via The Odds API."""
-  url = f"https://api.the-odds-api.com/v4/sports/{s_key}/odds/?apiKey={api_k}&regions=eu&markets=h2h,totals&bookmakers=winamax&oddsFormat=decimal"
+def fetch_odds_data(s_key, api_k):
+  url = f"https://api.the-odds-api.com/v4/sports/{s_key}/odds/?apiKey={api_k}&regions=eu&markets=h2h,totals&oddsFormat=decimal"
   try:
     res = requests.get(url)
     if res.status_code == 200:
@@ -129,7 +125,6 @@ def build_bivariate_poisson_matrix(xg_home, xg_away, max_goals=7, rho=-0.05):
       p_a = poisson_pmf(a, xg_away)
       adj = dixon_coles_adjustment(h, a, xg_home, xg_away, rho)
       matrix[h, a] = max(0.0, p_h * p_a * adj)
-
   matrix /= np.sum(matrix)
   return matrix
 
@@ -145,19 +140,17 @@ def calculate_kelly_stake(prob, odds, bankroll, fraction):
 
 
 # ==========================================
-# CHARGEMENT ET TRAITEMENT DES MATCHS
+# TRAITEMENT DES MATCHS
 # ==========================================
-matches = fetch_winamax_odds(league_map_odds[league_choice], ODDS_API_KEY)
+matches = fetch_odds_data(league_map_odds[league_choice], ODDS_API_KEY)
 
 if not matches:
-  st.warning(
-      f"Aucun match à venir trouvé sur Winamax pour {league_choice} (ou clé API"
-      " invalide)."
+  st.error(
+      f"Aucun match disponible actuellement pour {league_choice}. Réessaye"
+      " avec un autre championnat (ex: Premier League / Ligue des Champions) !"
   )
 else:
-  st.success(
-      f"✅ {len(matches)} match(s) chargé(s) sur Winamax pour {league_choice} !"
-  )
+  st.success(f"✅ {len(matches)} match(s) chargé(s) pour {league_choice} !")
 
   for idx, match in enumerate(matches):
     home_team = match["home_team"]
@@ -167,8 +160,13 @@ else:
     if not bookmakers:
       continue
 
-    # Extraction des marchés Winamax
-    markets = bookmakers[0].get("markets", [])
+    # Priorité à Winamax, sinon premier bookmaker dispo
+    selected_bm = next(
+        (b for b in bookmakers if b["key"].lower() == "winamax"), bookmakers[0]
+    )
+    bm_name = selected_bm.get("title", "Bookmaker")
+
+    markets = selected_bm.get("markets", [])
     h2h_market = next((m for m in markets if m["key"] == "h2h"), None)
     totals_market = next((m for m in markets if m["key"] == "totals"), None)
 
@@ -209,11 +207,13 @@ else:
           elif outcome["name"] == "Under":
             cote_u25 = outcome["price"]
 
-    with st.expander(f"⚽ {home_team} vs {away_team}", expanded=True):
+    with st.expander(
+        f"⚽ {home_team} vs {away_team} — (Source cotes : {bm_name})",
+        expanded=True,
+    ):
       c_att, c_def = st.columns(2)
 
       with c_att:
-        st.markdown("**Force Offensives / Défensives**")
         att_h = st.slider(
             f"Attaque {home_team} :",
             0.5,
@@ -232,7 +232,6 @@ else:
         )
 
       with c_def:
-        st.markdown("** **")
         att_a = st.slider(
             f"Attaque {away_team} :",
             0.5,
@@ -250,7 +249,6 @@ else:
             key=f"def_a_{idx}",
         )
 
-      # Calculated xG
       xg_home = round(att_h * def_a * home_advantage, 2)
       xg_away = round(att_a * def_h, 2)
 
@@ -261,8 +259,6 @@ else:
       prob_1 = float(np.sum(np.tril(matrix, -1)))
       prob_N = float(np.sum(np.diag(matrix)))
       prob_2 = float(np.sum(np.triu(matrix, 1)))
-      prob_1N = prob_1 + prob_N
-      prob_N2 = prob_N + prob_2
 
       prob_over25 = float(
           1.0
@@ -271,10 +267,6 @@ else:
           ])
       )
       prob_under25 = 1.0 - prob_over25
-      prob_btts_yes = float(
-          1.0 - (np.sum(matrix[0, :]) + np.sum(matrix[:, 0]) - matrix[0, 0])
-      )
-      prob_btts_no = 1.0 - prob_btts_yes
 
       col_left, col_right = st.columns([1.3, 1])
 
@@ -288,40 +280,24 @@ else:
             {
                 "Marché": f"Victoire {home_team} (1)",
                 "Probabilité": prob_1,
-                "Winamax": cote_1,
+                "Cote": cote_1,
             },
-            {"Marché": "Match Nul (N)", "Probabilité": prob_N, "Winamax": cote_N},
+            {"Marché": "Match Nul (N)", "Probabilité": prob_N, "Cote": cote_N},
             {
                 "Marché": f"Victoire {away_team} (2)",
                 "Probabilité": prob_2,
-                "Winamax": cote_2,
-            },
-            {
-                "Marché": "Chance Double 1N",
-                "Probabilité": prob_1N,
-                "Winamax": 1 / ((1 / cote_1) + (1 / cote_N)),
-            },
-            {
-                "Marché": "Chance Double N2",
-                "Probabilité": prob_N2,
-                "Winamax": 1 / ((1 / cote_N) + (1 / cote_2)),
+                "Cote": cote_2,
             },
             {
                 "Marché": "Over 2.5 Buts",
                 "Probabilité": prob_over25,
-                "Winamax": cote_o25,
+                "Cote": cote_o25,
             },
             {
                 "Marché": "Under 2.5 Buts",
                 "Probabilité": prob_under25,
-                "Winamax": cote_u25,
+                "Cote": cote_u25,
             },
-            {
-                "Marché": "BTTS Oui",
-                "Probabilité": prob_btts_yes,
-                "Winamax": 1.75,
-            },
-            {"Marché": "BTTS Non", "Probabilité": prob_btts_no, "Winamax": 2.00},
         ]
 
         df_analysis = pd.DataFrame(data_markets)
@@ -329,11 +305,11 @@ else:
             lambda x: round(1 / x, 2) if x > 0 else 99
         )
         df_analysis["Expected Value (EV)"] = (
-            df_analysis["Probabilité"] * df_analysis["Winamax"]
+            df_analysis["Probabilité"] * df_analysis["Cote"]
         ) - 1.0
         df_analysis["Mise (€)"] = df_analysis.apply(
             lambda r: calculate_kelly_stake(
-                r["Probabilité"], r["Winamax"], bankroll, kelly_fraction
+                r["Probabilité"], r["Cote"], bankroll, kelly_fraction
             ),
             axis=1,
         )
@@ -355,7 +331,7 @@ else:
                     "Marché",
                     "Probabilité",
                     "Cote Équitable",
-                    "Winamax",
+                    "Cote",
                     "Expected Value (EV)",
                     "Mise (€)",
                 ]
@@ -365,18 +341,17 @@ else:
         )
 
       with col_right:
-        st.markdown("**🎯 Value Bets Détectées (Winamax)**")
+        st.markdown(f"**🎯 Value Bets ({bm_name})**")
         val_bets = df_analysis[
             df_analysis["Expected Value (EV)"] >= min_ev_threshold
         ]
 
         if len(val_bets) == 0:
-          st.info("Aucun paris à forte valeur trouvé sur ce match.")
+          st.info("Aucun paris à valeur détecté.")
         else:
           for _, row in val_bets.iterrows():
             ev_pct = round(row["Expected Value (EV)"] * 100, 1)
             st.success(
-                f"🔥 **{row['Marché']}** @ Winamax **{round(row['Winamax'], 2)}**"
-                f"\n\n→ Value : **+{ev_pct}%** | Mise Kelly :"
-                f" **{row['Mise (€)']} €**"
+                f"🔥 **{row['Marché']}** @ **{round(row['Cote'], 2)}**\n\n→ Value"
+                f" : **+{ev_pct}%** | Mise Kelly : **{row['Mise (€)']} €**"
             )
