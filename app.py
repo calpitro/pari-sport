@@ -5,7 +5,7 @@ import requests
 
 st.set_page_config(page_title="🎯 QuantBet Auto - Foot & Tennis", layout="wide")
 st.title("🎯 QuantBet Studio - Dashboard Automatique")
-st.caption("Données API, Loi de Poisson, Surface & Vitesse de Court")
+st.caption("Données API, Loi de Poisson, Forme Récente & Bilan Domicile/Extérieur")
 st.markdown("---")
 
 st.sidebar.header("⚙️ Configuration API")
@@ -128,15 +128,29 @@ TENNIS_PROFILES = {
     "Djokovic": {"main": "Droitier", "style": "Relanceur / Contreur", "aces_avg": 7}
 }
 
+def calculer_note_forme(v, n, d, est_domicile=True):
+    # Calcul des points sur les 5 derniers matchs
+    total_matchs = max(v + n + d, 1)
+    pts = (v * 3) + (n * 1)
+    note_base = (pts / (total_matchs * 3)) * 10
+    
+    # Bonus/Malus selon l'impact terrain
+    if est_domicile:
+        note_finale = note_base * 1.10
+    else:
+        note_finale = note_base * 0.90
+        
+    return round(min(max(note_finale, 1.5), 9.8), 1)
+
 def get_tennis_profile(player_name):
     for key, data in TENNIS_PROFILES.items():
         if key.lower() in player_name.lower():
             return data
     return {"main": "Droitier", "style": "Standard", "aces_avg": 6}
 
-def analyser_rencontre(equipe_home, equipe_away, sport, cote_home, cote_away, surface="Dur", vitesse="Médium", is_alt=False, is_gc=False):
-    seed_value = abs(hash(equipe_home + equipe_away)) % (2**32)
-    np.random.seed(seed_value)
+def analyser_rencontre(equipe_home, equipe_away, sport, cote_home, cote_away, 
+                       forme_h_val=7.0, forme_a_val=5.0, 
+                       surface="Dur", vitesse="Médium", is_alt=False, is_gc=False):
     
     prob_mkt_home = 1 / cote_home
     prob_mkt_away = 1 / cote_away
@@ -144,22 +158,27 @@ def analyser_rencontre(equipe_home, equipe_away, sport, cote_home, cote_away, su
     stats = {}
     
     if sport == "Football":
-        stats["forme_home"] = round(min(max((prob_mkt_home * 10) + 2.5, 3.0), 9.5), 1)
-        stats["forme_away"] = round(min(max((prob_mkt_away * 10) + 1.5, 3.0), 9.5), 1)
+        stats["forme_home"] = forme_h_val
+        stats["forme_away"] = forme_a_val
         
-        lambda_buts = max(1.8, 3.2 - (abs(cote_home - cote_away) * 0.2))
+        # Ajustement dynamique du xG (lambda) selon le différentiel de forme réelle
+        diff_forme = (forme_h_val - forme_a_val) / 10.0
+        lambda_base = max(1.8, 3.2 - (abs(cote_home - cote_away) * 0.2))
+        lambda_buts = max(1.2, lambda_base + (diff_forme * 0.5))
+        
         prob_0_buts = np.exp(-lambda_buts)
         prob_1_but = lambda_buts * np.exp(-lambda_buts)
         
         stats["over_1_5_prob"] = round(1.0 - (prob_0_buts + prob_1_but), 2)
         stats["over_2_5_prob"] = round(stats["over_1_5_prob"] - 0.22, 2)
-        stats["btts_prob"] = round(0.52 + (0.08 if abs(cote_home - cote_away) < 0.8 else -0.06), 2)
+        stats["btts_prob"] = round(0.52 + (0.08 if abs(cote_home - cote_away) < 0.8 else -0.06) + (diff_forme * 0.05), 2)
+        stats["btts_prob"] = min(max(stats["btts_prob"], 0.30), 0.85)
         
-        summary = f"💡 **Analyse Poisson/xG :** Espérance de buts estimée à {round(lambda_buts, 2)} buts."
+        summary = f"💡 **Analyse Poisson/xG :** Espérance de buts estimée à {round(lambda_buts, 2)} buts (Pondération forme Domicile/Extérieur)."
         stats["summary"] = summary
     else:
-        stats["forme_home"] = round(min(max(prob_mkt_home * 10 + 1.5, 3.0), 9.5), 1)
-        stats["forme_away"] = round(min(max(prob_mkt_away * 10 + 1.5, 3.0), 9.5), 1)
+        stats["forme_home"] = forme_h_val
+        stats["forme_away"] = forme_a_val
         
         coef_surface = 0.65 if surface == "Terre battue" else (1.35 if surface == "Gazon" else 1.0)
         coef_vitesse = 0.82 if "Lent" in vitesse else (1.20 if "Rapide" in vitesse else 1.0)
@@ -217,20 +236,46 @@ else:
         cote_away = next((item['price'] for item in markets if item['name'] == away), 1.0)
         
         is_foot = (sport_choice == "Football")
-        stats = analyser_rencontre(home, away, sport_choice, cote_home, cote_away, surface_choice, vitesse_choice, altitude_choice, format_grand_chelem)
-        
-        prob_algo_home = (1 / cote_home)
-        prob_algo_away = (1 / cote_away)
         
         with st.expander(f"⚔️ {home} vs {away}", expanded=True):
+            
+            # MODULE DE SAISIE DE FORME DYNAMIQUE
+            st.markdown("**⚙️ Module Forme Récente (Derniers Matchs)**")
+            f_col1, f_col2 = st.columns(2)
+            
+            with f_col1:
+                st.caption(f"🏠 Bilan Domicile de **{home}**")
+                vh = st.number_input(f"Victoires ({home})", 0, 5, 3, key=f"vh_{home}_{away}")
+                nh = st.number_input(f"Nuls ({home})", 0, 5, 1, key=f"nh_{home}_{away}")
+                dh = st.number_input(f"Défaites ({home})", 0, 5, 1, key=f"dh_{home}_{away}")
+                note_h = calculer_note_forme(vh, nh, dh, est_domicile=True)
+                
+            with f_col2:
+                st.caption(f"✈️ Bilan Extérieur de **{away}**")
+                va = st.number_input(f"Victoires ({away})", 0, 5, 1, key=f"va_{home}_{away}")
+                na = st.number_input(f"Nuls ({away})", 0, 5, 2, key=f"na_{home}_{away}")
+                da = st.number_input(f"Défaites ({away})", 0, 5, 2, key=f"da_{home}_{away}")
+                note_a = calculer_note_forme(va, na, da, est_domicile=False)
+            
+            # ANALYSE ET CALCUL
+            stats = analyser_rencontre(
+                home, away, sport_choice, cote_home, cote_away, 
+                forme_h_val=note_h, forme_a_val=note_a, 
+                surface=surface_choice, vitesse=vitesse_choice, 
+                is_alt=altitude_choice, is_gc=format_grand_chelem
+            )
+            
             st.info(stats["summary"])
+            
+            prob_algo_home = (1 / cote_home)
+            prob_algo_away = (1 / cote_away)
             
             c1, c2, c3 = st.columns([1, 1, 1])
             
             with c1:
-                st.markdown("**📊 État de Forme**")
-                st.write(f"• {home} : **{stats['forme_home']}/10**")
-                st.write(f"• {away} : **{stats['forme_away']}/10**")
+                st.markdown("**📊 État de Forme Réel**")
+                st.write(f"• {home} (Dom) : **{stats['forme_home']}/10**")
+                st.write(f"• {away} (Ext) : **{stats['forme_away']}/10**")
                 st.markdown("**💰 Cotes Vainqueur**")
                 st.write(f"1 ({home}) : **{cote_home}**")
                 st.write(f"2 ({away}) : **{cote_away}**")
