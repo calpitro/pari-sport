@@ -1,3 +1,4 @@
+import datetime
 import math
 import numpy as np
 import pandas as pd
@@ -5,52 +6,64 @@ import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="QuantBet Pro - RapidAPI Engine", page_icon="⚽", layout="wide"
+    page_title="QuantBet Pro - Monthly Tracker", page_icon="📈", layout="wide"
 )
 
-st.title("⚽ QuantBet Pro - Live Data Engine (RapidAPI)")
-st.caption(
-    "Données Statistiques Externes | Modélisation Dixon-Coles & Poisson | Kelly"
-)
+st.title("⚽ QuantBet Pro - Moteur +EV & Suivi Mensuel")
 st.markdown("---")
 
-
-# --- MATH NATIF ---
-def poisson_pmf(k, lamb):
-  return (lamb**k * math.exp(-lamb)) / math.factorial(k)
-
+# ==========================================
+# INITIALISATION DU SESSION STATE (Suivi du mois)
+# ==========================================
+if "historique_paris" not in st.session_state:
+  st.session_state.historique_paris = []
 
 # ==========================================
-# SIDEBAR
+# SIDEBAR - CONFIGURATION & BUDGET
 # ==========================================
-st.sidebar.header("🔑 Clés API & Bankroll")
-ODDS_API_KEY = st.sidebar.text_input("Clé The Odds API :", type="password")
-RAPID_API_KEY = st.sidebar.text_input(
-    "Clé RapidAPI (Sport/Stats) :", type="password"
+st.sidebar.header("🔑 Clés API")
+ODDS_API_KEY = st.sidebar.text_input("The Odds API Key :", type="password")
+RAPID_API_KEY = st.sidebar.text_input("RapidAPI Key :", type="password")
+
+st.sidebar.markdown("---")
+st.sidebar.header("📅 Budget Mensuel")
+
+mois_options = [
+    "Janvier",
+    "Février",
+    "Mars",
+    "Avril",
+    "Mai",
+    "Juin",
+    "Juillet",
+    "Août",
+    "Septembre",
+    "Octobre",
+    "Novembre",
+    "Décembre",
+]
+mois_actuel = mois_options[datetime.datetime.now().month - 1]
+selected_month = st.sidebar.selectbox(
+    "Mois actif :", mois_options, index=mois_options.index(mois_actuel)
 )
 
-bankroll = st.sidebar.number_input(
-    "Bankroll Totale (€) :", min_value=10.0, value=1000.0, step=50.0
+bankroll_initiale = st.sidebar.number_input(
+    f"Capital initial pour {selected_month} (€) :",
+    min_value=10.0,
+    value=500.0,
+    step=50.0,
 )
+
 kelly_fraction = st.sidebar.select_slider(
-    "Gestion du risque (Kelly) :",
-    options=[0.1, 0.25, 0.5, 1.0],
-    value=0.25,
-    format_func=lambda x: {
-        0.1: "1/10 Kelly",
-        0.25: "1/4 Kelly (Recommandé)",
-        0.5: "1/2 Kelly",
-        1.0: "Full Kelly",
-    }[x],
+    "Fraction Kelly :", options=[0.1, 0.25, 0.5, 1.0], value=0.25
 )
 min_ev_threshold = (
-    st.sidebar.slider("Seuil EV minimum (% Value) :", 0.0, 15.0, 2.0, 0.5) / 100.0
+    st.sidebar.slider("Seuil EV minimum (%) :", 0.0, 15.0, 2.0, 0.5) / 100.0
 )
 
 st.sidebar.markdown("---")
-st.sidebar.header("🏆 Championnat")
 league_choice = st.sidebar.selectbox(
-    "Sélectionne la compétition :",
+    "Championnat :",
     [
         "🇫🇷 France - Ligue 1",
         "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Angleterre - Premier League",
@@ -70,46 +83,17 @@ league_map_odds = {
 
 if not ODDS_API_KEY or not RAPID_API_KEY:
   st.warning(
-      "👈 Veuillez renseigner vos deux clés API (The Odds API et RapidAPI) dans"
-      " le menu à gauche."
+      "👈 Veuillez renseigner vos clés API dans la barre latérale pour"
+      " démarrer."
   )
   st.stop()
 
 
 # ==========================================
-# RÉCUPÉRATION DES STATS VIA RAPIDAPI
+# FONCTIONS MATHÉMATIQUES ET API
 # ==========================================
-@st.cache_data(ttl=3600)
-def fetch_rapidapi_stats(team_name, api_key):
-  """Interroge l'API RapidAPI choisie pour récupérer les buts/xG d'une équipe."""
-  url = "https://api-football-beta.p.rapidapi.com/" # Remplacer par l'endpoint exact fourni dans la documentation de l'API sélectionnée
-  headers = {
-      "X-RapidAPI-Key": api_key,
-      "X-RapidAPI-Host": "api-football-beta.p.rapidapi.com", # À adapter selon l'hôte indiqué sur la page de l'API
-  }
-  # Exemple d'appel sécurisé avec repli sur des valeurs par défaut si l'API ne répond pas
-  try:
-    # response = requests.get(url, headers=headers, params={"search": team_name})
-    # data = response.json()
-    # Logique d'extraction des buts marqués / encaissés par match
-    return 1.4, 1.1
-  except Exception:
-    return 1.3, 1.2
-
-
-# ==========================================
-# ODDS API & DIXON-COLES
-# ==========================================
-@st.cache_data(ttl=1800)
-def fetch_odds_data(s_key, api_k):
-  url = f"https://api.the-odds-api.com/v4/sports/{s_key}/odds/?apiKey={api_k}&regions=eu&markets=h2h,totals&oddsFormat=decimal"
-  try:
-    res = requests.get(url)
-    if res.status_code == 200:
-      return res.json()
-  except Exception:
-    pass
-  return []
+def poisson_pmf(k, lamb):
+  return (lamb**k * math.exp(-lamb)) / math.factorial(k)
 
 
 def dixon_coles_adjustment(h, a, lambda_h, lambda_a, rho=-0.05):
@@ -136,6 +120,28 @@ def build_bivariate_poisson_matrix(xg_home, xg_away, max_goals=7):
   return matrix
 
 
+@st.cache_data(ttl=3600)
+def fetch_rapidapi_stats(team_name, api_key):
+  # Logique d'appel RapidAPI pour récupérer les xG/buts
+  try:
+    # Intègre ici ton endpoint réel RapidAPI
+    return 1.4, 1.1
+  except Exception:
+    return 1.3, 1.2
+
+
+@st.cache_data(ttl=1800)
+def fetch_odds_data(s_key, api_k):
+  url = f"https://api.the-odds-api.com/v4/sports/{s_key}/odds/?apiKey={api_k}&regions=eu&markets=h2h,totals&oddsFormat=decimal"
+  try:
+    res = requests.get(url)
+    if res.status_code == 200:
+      return res.json()
+  except Exception:
+    pass
+  return []
+
+
 def calculate_kelly_stake(prob, odds, bankroll, fraction):
   b = odds - 1.0
   f = (b * prob - (1.0 - prob)) / b
@@ -143,18 +149,33 @@ def calculate_kelly_stake(prob, odds, bankroll, fraction):
 
 
 # ==========================================
-# RENDU DU PROGRAMME
+# TABLEAU DE BORD BANGRKOL MENSUEL
+# ==========================================
+total_mises_cours = sum(
+    [p["Mise"] for p in st.session_state.historique_paris if p["Mois"] == selected_month]
+)
+bankroll_disponible = bankroll_initiale - total_mises_cours
+
+col_b1, col_b2, col_b3 = st.columns(3)
+col_b1.metric(
+    f"Capital Initial ({selected_month})", f"{bankroll_initiale} €"
+)
+col_b2.metric("Engagé en cours", f"{round(total_mises_cours, 2)} €")
+col_b3.metric("Capital Disponible", f"{round(bankroll_disponible, 2)} €")
+st.markdown("---")
+
+# ==========================================
+# CHARGEMENT DES MATCHS ET CALCULS
 # ==========================================
 matches = fetch_odds_data(league_map_odds[league_choice], ODDS_API_KEY)
 
 if not matches:
   st.error(
-      f"Aucun match disponible pour {league_choice}. Vérifiez la compétition."
+      f"Aucun match disponible pour {league_choice}. Vérifiez vos clés ou la"
+      " ligue."
   )
 else:
-  st.success(
-      f"⚡ {len(matches)} matchs chargés pour {league_choice} via RapidAPI !"
-  )
+  st.success(f"⚡ {len(matches)} matchs chargés pour {league_choice} !")
 
   for match in matches:
     home_team = match["home_team"]
@@ -195,7 +216,6 @@ else:
           elif o["name"] == "Under":
             cote_u25 = o["price"]
 
-    # Récupération des stats dynamiques de l'API choisie
     h_for, h_ag = fetch_rapidapi_stats(home_team, RAPID_API_KEY)
     a_for, a_ag = fetch_rapidapi_stats(away_team, RAPID_API_KEY)
 
@@ -217,13 +237,8 @@ else:
     prob_under25 = 1.0 - prob_over25
 
     with st.expander(
-        f"⚽ {home_team} vs {away_team} ({bm_title})", expanded=True
+        f"⚽ {home_team} vs {away_team} ({bm_title})", expanded=False
     ):
-      st.write(
-          f"📊 **xG Calculés (RapidAPI) :** `{xg_home}` ({home_team}) -"
-          f" `{xg_away}` ({away_team})"
-      )
-
       data = [
           {
               "Marché": f"Victoire {home_team} (1)",
@@ -253,52 +268,60 @@ else:
           lambda x: round(1 / x, 2) if x > 0 else 99
       )
       df["Expected Value (EV)"] = (df["Probabilité"] * df["Cote Bookie"]) - 1.0
+      # Le calcul de mise prend en compte le capital réellement disponible du mois
       df["Mise (€)"] = df.apply(
           lambda r: calculate_kelly_stake(
-              r["Probabilité"], r["Cote Bookie"], bankroll, kelly_fraction
+              r["Probabilité"], r["Cote Bookie"], bankroll_disponible, kelly_fraction
           ),
           axis=1,
       )
 
-      col1, col2 = st.columns([1.3, 1])
+      val_bets = df[df["Expected Value (EV)"] >= min_ev_threshold]
 
-      with col1:
-        df_disp = df.copy()
-        df_disp["Probabilité"] = df_disp["Probabilité"].apply(
-            lambda x: f"{round(x*100, 1)}%"
-        )
-        df_disp["Expected Value (EV)"] = df_disp["Expected Value (EV)"].apply(
-            lambda x: f"{'+' if x>0 else ''}{round(x*100, 1)}%"
-        )
-        df_disp["Mise (€)"] = df_disp["Mise (€)"].apply(
-            lambda x: f"{x} €" if x > 0 else "-"
-        )
-
-        st.dataframe(
-            df_disp[
-                [
-                    "Marché",
-                    "Probabilité",
-                    "Cote Équitable",
-                    "Cote Bookie",
-                    "Expected Value (EV)",
-                    "Mise (€)",
-                ]
-            ],
-            use_container_width=True,
-            hide_index=True,
-        )
-
-      with col2:
-        st.markdown("**🎯 Value Bets Détectées**")
-        val_bets = df[df["Expected Value (EV)"] >= min_ev_threshold]
-
-        if len(val_bets) == 0:
-          st.info("Aucune valeur détectée sur ce match.")
-        else:
-          for _, row in val_bets.iterrows():
-            ev_pct = round(row["Expected Value (EV)"] * 100, 1)
+      if len(val_bets) == 0:
+        st.info("Aucune valeur détectée sur ce match.")
+      else:
+        for _, row in val_bets.iterrows():
+          ev_pct = round(row["Expected Value (EV)"] * 100, 1)
+          col_v1, col_v2 = st.columns([3, 1])
+          with col_v1:
             st.success(
-                f"🔥 **{row['Marché']}** @ **{row['Cote Bookie']}**\n\n→ Value :"
+                f"🔥 **{row['Marché']}** @ **{row['Cote Bookie']}** | Value :"
                 f" **+{ev_pct}%** | Mise conseillée : **{row['Mise (€)']} €**"
             )
+          with col_v2:
+            bet_id = f"{home_team}-{away_team}-{row['Marché']}"
+            if st.button("Valider le Pari", key=bet_id):
+              st.session_state.historique_paris.append({
+                  "Mois": selected_month,
+                  "Match": f"{home_team} vs {away_team}",
+                  "Pari": row["Marché"],
+                  "Cote": row["Cote Bookie"],
+                  "Mise": row["Mise (€)"],
+              })
+              st.rerun()
+
+# ==========================================
+# HISTORIQUE DES PARIS DU MOIS
+# ==========================================
+st.markdown("---")
+st.subheader(f"📋 Suivi des paris validés pour {selected_month}")
+
+paris_du_mois = [
+    p for p in st.session_state.historique_paris if p["Mois"] == selected_month
+]
+
+if not paris_du_mois:
+  st.info(
+      "Aucun pari enregistré pour ce mois-ci. Clique sur 'Valider le Pari' pour"
+      " l'ajouter à ton suivi."
+  )
+else:
+  df_historique = pd.DataFrame(paris_du_mois)
+  st.dataframe(df_historique[["Match", "Pari", "Cote", "Mise"]], use_container_width=True, hide_index=True)
+  
+  if st.button("🗑️ Effacer l'historique du mois"):
+    st.session_state.historique_paris = [
+        p for p in st.session_state.historique_paris if p["Mois"] != selected_month
+    ]
+    st.rerun()
