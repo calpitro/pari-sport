@@ -5,19 +5,23 @@ import requests
 
 st.set_page_config(page_title="🎯 QuantBet Auto - Football Studio", layout="wide")
 st.title("⚽ QuantBet Studio - Dashboard Football Auto")
-st.caption("Données API-Sports & The Odds API | Analyse Poisson/xG & Bilan Automatique 5 Matchs")
+st.caption("Données API-Sports & The Odds API | Analyse Poisson/xG & Forme Réelle 5 Matchs")
 st.markdown("---")
 
 # --- CONFIGURATION DES CLÉS API EN SIDEBAR ---
 st.sidebar.header("⚙️ Configuration APIs")
 ODDS_API_KEY = st.sidebar.text_input("Clé The Odds API :", type="password")
-API_SPORTS_KEY = st.sidebar.text_input("Clé API-Sports (dashboard.api-football.com) :", type="password", help="Utilisée pour récupérer automatiquement les 5 derniers résultats")
+API_SPORTS_KEY = st.sidebar.text_input(
+    "Clé API-Sports (dashboard.api-football.com) :", 
+    type="password", 
+    help="Utilisée pour récupérer automatiquement les 5 derniers résultats"
+)
 
 if not ODDS_API_KEY:
     st.warning("👈 Veuillez entrer au moins votre clé The Odds API dans le panneau de gauche pour charger les matchs.")
     st.stop()
 
-# --- SELECTION DE LA COMPETITION FOOTBALL ---
+# --- SÉLECTION DE LA COMPÉTITION FOOTBALL ---
 league_choice = st.sidebar.selectbox(
     "Sélectionne la compétition :",
     [
@@ -43,7 +47,7 @@ league_map = {
     "🇪🇺 Europe - Ligue Europa": "soccer_uefa_europa_league"
 }
 
-# --- FONCTION CACHÉE : RECUPERATION DES COTES (The Odds API) ---
+# --- FONCTION CACHÉE : RÉCUPÉRATION DES COTES (The Odds API) ---
 @st.cache_data(ttl=1800)
 def fetch_odds(s_key, api_k):
     url = f"https://api.the-odds-api.com/v4/sports/{s_key}/odds/?apiKey={api_k}&regions=eu&markets=h2h&oddsFormat=decimal"
@@ -55,39 +59,62 @@ def fetch_odds(s_key, api_k):
         pass
     return []
 
-# --- FONCTION CACHÉE : FETCH AUTO DES 5 DERNIERS MATCHS (API-Sports Direct) ---
+# --- FONCTION CACHÉE : RECHERCHE AUTO AVEC NETTOYAGE DES NOMS D'ÉQUIPES ---
 @st.cache_data(ttl=3600)
 def get_team_last_5_results(team_name, api_key):
     """
-    Interroge directement dashboard.api-football.com pour extraire le bilan réel des 5 derniers matchs
+    Interroge dashboard.api-football.com avec nettoyage de nom
+    et fallback sur le premier mot-clé pour éviter les erreurs d'identification.
     """
     if not api_key:
-        return {"v": 3, "n": 1, "d": 1, "status": "Simulé (Pas de clé API-Sports)"}
+        return {"v": 2, "n": 2, "d": 1, "status": "Simulé (Pas de clé API-Sports)"}
 
-    headers = {
-        "x-apisports-key": api_key
-    }
+    headers = {"x-apisports-key": api_key}
+    
+    # Nettoyage des préfixes / suffixes fréquents
+    clean_name = (
+        team_name.replace("USL ", "")
+        .replace("FC ", "")
+        .replace("AS ", "")
+        .replace(" SC", "")
+        .replace(" AJ", "")
+        .strip()
+    )
     
     try:
-        # 1. Recherche ID Équipe
-        search_url = f"https://v3.football.api-sports.io/teams?search={team_name}"
+        # 1. Premier essai avec le nom nettoyé
+        search_url = f"https://v3.football.api-sports.io/teams?search={clean_name}"
         res_team = requests.get(search_url, headers=headers).json()
         
+        # 2. Deuxième essai (fallback) si non trouvé : premier mot du nom de l'équipe
         if not res_team.get("response"):
-            return {"v": 2, "n": 2, "d": 1, "status": "Équipe non trouvée"}
+            first_word = clean_name.split()[0] if clean_name else team_name
+            search_url = f"https://v3.football.api-sports.io/teams?search={first_word}"
+            res_team = requests.get(search_url, headers=headers).json()
+
+        if not res_team.get("response"):
+            return {"v": 2, "n": 2, "d": 1, "status": f"Non trouvé ({team_name})"}
             
         team_id = res_team["response"][0]["team"]["id"]
         
-        # 2. Récupération des 5 derniers matchs
+        # 3. Récupération des 5 derniers matchs joués
         fixtures_url = f"https://v3.football.api-sports.io/fixtures?team={team_id}&last=5"
         res_fix = requests.get(fixtures_url, headers=headers).json()
         
         v, n, d = 0, 0, 0
-        for match in res_fix.get("response", []):
+        matches = res_fix.get("response", [])
+        
+        if not matches:
+            return {"v": 2, "n": 2, "d": 1, "status": "Aucun match récent"}
+
+        for match in matches:
             goals_home = match["goals"]["home"]
             goals_away = match["goals"]["away"]
             is_home = match["teams"]["home"]["id"] == team_id
             
+            if goals_home is None or goals_away is None:
+                continue
+                
             if goals_home == goals_away:
                 n += 1
             elif (is_home and goals_home > goals_away) or (not is_home and goals_away > goals_home):
