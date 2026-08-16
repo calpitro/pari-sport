@@ -2,10 +2,11 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
+import difflib
 
 st.set_page_config(page_title="🎯 QuantBet Auto - Football Studio", layout="wide")
 st.title("⚽ QuantBet Studio - Dashboard Football Auto")
-st.caption("Données API-Sports & The Odds API | Analyse Poisson/xG & Forme Réelle 5 Matchs")
+st.caption("Données API-Sports & The Odds API | Analyse Poisson/xG & Matching Intelligent par Ligue")
 st.markdown("---")
 
 # --- CONFIGURATION DES CLÉS API EN SIDEBAR ---
@@ -14,14 +15,14 @@ ODDS_API_KEY = st.sidebar.text_input("Clé The Odds API :", type="password")
 API_SPORTS_KEY = st.sidebar.text_input(
     "Clé API-Sports (dashboard.api-football.com) :", 
     type="password", 
-    help="Utilisée pour récupérer automatiquement les 5 derniers résultats"
+    help="Utilisée pour récupérer les 5 derniers résultats"
 )
 
 if not ODDS_API_KEY:
-    st.warning("👈 Veuillez entrer au moins votre clé The Odds API dans le panneau de gauche pour charger les matchs.")
+    st.warning("👈 Veuillez entrer votre clé The Odds API dans le panneau de gauche pour démarrer.")
     st.stop()
 
-# --- SÉLECTION DE LA COMPÉTITION FOOTBALL ---
+# --- SÉLECTION DE LA COMPÉTITION ---
 league_choice = st.sidebar.selectbox(
     "Sélectionne la compétition :",
     [
@@ -36,7 +37,8 @@ league_choice = st.sidebar.selectbox(
     ]
 )
 
-league_map = {
+# Mappage The Odds API
+league_map_odds = {
     "🇫🇷 France - Ligue 1": "soccer_france_ligue_one",
     "🇫🇷 France - Ligue 2": "soccer_france_ligue_two",
     "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Angleterre - Premier League": "soccer_epl",
@@ -47,7 +49,19 @@ league_map = {
     "🇪🇺 Europe - Ligue Europa": "soccer_uefa_europa_league"
 }
 
-# --- FONCTION CACHÉE : RÉCUPÉRATION DES COTES (The Odds API) ---
+# Mappage ID Championnats API-Sports (Saison 2024/2025/2026)
+league_map_apisports = {
+    "🇫🇷 France - Ligue 1": 61,
+    "🇫🇷 France - Ligue 2": 62,
+    "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Angleterre - Premier League": 39,
+    "🇪🇸 Espagne - La Liga": 140,
+    "🇮🇹 Italie - Serie A": 135,
+    "🇩🇪 Allemagne - Bundesliga": 78,
+    "🇪🇺 Europe - Ligue des Champions": 2,
+    "🇪🇺 Europe - Ligue Europa": 3
+}
+
+# --- FONCTION : RÉCUPÉRATION COTES ---
 @st.cache_data(ttl=1800)
 def fetch_odds(s_key, api_k):
     url = f"https://api.the-odds-api.com/v4/sports/{s_key}/odds/?apiKey={api_k}&regions=eu&markets=h2h&oddsFormat=decimal"
@@ -59,72 +73,85 @@ def fetch_odds(s_key, api_k):
         pass
     return []
 
-# --- FONCTION CACHÉE : RECHERCHE AUTO AVEC NETTOYAGE DES NOMS D'ÉQUIPES ---
-@st.cache_data(ttl=3600)
-def get_team_last_5_results(team_name, api_key):
+# --- FONCTION : CHARGEMENT DE TOUTES LES ÉQUIPES DE LA LIGUE (API-Sports) ---
+@st.cache_data(ttl=86400)
+def get_league_teams_map(league_id, api_key):
     """
-    Interroge dashboard.api-football.com avec nettoyage de nom
-    et fallback sur le premier mot-clé pour éviter les erreurs d'identification.
+    Récupère l'annuaire complet ID/Nom des équipes pour une ligue
     """
     if not api_key:
-        return {"v": 2, "n": 2, "d": 1, "status": "Simulé (Pas de clé API-Sports)"}
-
-    headers = {"x-apisports-key": api_key}
+        return {}
     
-    # Nettoyage des préfixes / suffixes fréquents
-    clean_name = (
-        team_name.replace("USL ", "")
-        .replace("FC ", "")
-        .replace("AS ", "")
-        .replace(" SC", "")
-        .replace(" AJ", "")
-        .strip()
-    )
+    headers = {"x-apisports-key": api_key}
+    url = f"https://v3.football.api-sports.io/teams?league={league_id}&season=2024"
     
     try:
-        # 1. Premier essai avec le nom nettoyé
-        search_url = f"https://v3.football.api-sports.io/teams?search={clean_name}"
-        res_team = requests.get(search_url, headers=headers).json()
-        
-        # 2. Deuxième essai (fallback) si non trouvé : premier mot du nom de l'équipe
-        if not res_team.get("response"):
-            first_word = clean_name.split()[0] if clean_name else team_name
-            search_url = f"https://v3.football.api-sports.io/teams?search={first_word}"
-            res_team = requests.get(search_url, headers=headers).json()
+        res = requests.get(url, headers=headers).json()
+        teams_map = {}
+        for item in res.get("response", []):
+            t_id = item["team"]["id"]
+            t_name = item["team"]["name"]
+            teams_map[t_name] = t_id
+        return teams_map
+    except Exception:
+        return {}
 
-        if not res_team.get("response"):
-            return {"v": 2, "n": 2, "d": 1, "status": f"Non trouvé ({team_name})"}
-            
-        team_id = res_team["response"][0]["team"]["id"]
-        
-        # 3. Récupération des 5 derniers matchs joués
-        fixtures_url = f"https://v3.football.api-sports.io/fixtures?team={team_id}&last=5"
+# --- FONCTION : RÉSULTATS PAR FUZZY MATCHING ---
+@st.cache_data(ttl=3600)
+def get_team_last_5_results_smart(team_name, teams_map, api_key):
+    """
+    Trouve l'équipe grâce à une comparaison de texte (fuzzy match)
+    sur l'annuaire complet de la ligue.
+    """
+    if not api_key or not teams_map:
+        return {"v": 2, "n": 2, "d": 1, "status": "Simulé (Pas de clé / Map vide)"}
+
+    # Recherche du nom le plus proche parmi les équipes du championnat
+    matches = difflib.get_close_matches(team_name, teams_map.keys(), n=1, cutoff=0.3)
+    
+    if not matches:
+        # Deuxième chance : correspondance sur un mot partagé
+        clean_target = team_name.replace("USL ", "").replace("FC ", "").replace("AS ", "").strip()
+        for known_name in teams_map.keys():
+            if clean_target.lower() in known_name.lower():
+                matches = [known_name]
+                break
+
+    if not matches:
+        return {"v": 2, "n": 2, "d": 1, "status": f"Non trouvé ({team_name})"}
+
+    matched_name = matches[0]
+    team_id = teams_map[matched_name]
+
+    headers = {"x-apisports-key": api_key}
+    fixtures_url = f"https://v3.football.api-sports.io/fixtures?team={team_id}&last=5"
+    
+    try:
         res_fix = requests.get(fixtures_url, headers=headers).json()
-        
         v, n, d = 0, 0, 0
-        matches = res_fix.get("response", [])
+        match_list = res_fix.get("response", [])
         
-        if not matches:
-            return {"v": 2, "n": 2, "d": 1, "status": "Aucun match récent"}
+        if not match_list:
+            return {"v": 2, "n": 2, "d": 1, "status": f"Pas de matchs ({matched_name})"}
 
-        for match in matches:
-            goals_home = match["goals"]["home"]
-            goals_away = match["goals"]["away"]
-            is_home = match["teams"]["home"]["id"] == team_id
+        for m in match_list:
+            gh = m["goals"]["home"]
+            ga = m["goals"]["away"]
+            is_home = m["teams"]["home"]["id"] == team_id
             
-            if goals_home is None or goals_away is None:
+            if gh is None or ga is None:
                 continue
                 
-            if goals_home == goals_away:
+            if gh == ga:
                 n += 1
-            elif (is_home and goals_home > goals_away) or (not is_home and goals_away > goals_home):
+            elif (is_home and gh > ga) or (not is_home and ga > gh):
                 v += 1
             else:
                 d += 1
                 
-        return {"v": v, "n": n, "d": d, "status": "Auto (API-Sports)"}
+        return {"v": v, "n": n, "d": d, "status": f"Auto ({matched_name})"}
     except Exception:
-        return {"v": 2, "n": 2, "d": 1, "status": "Erreur connexion"}
+        return {"v": 2, "n": 2, "d": 1, "status": "Erreur réseau"}
 
 def calculer_note_forme(v, n, d, est_domicile=True):
     pts = (v * 3) + (n * 1)
@@ -132,10 +159,11 @@ def calculer_note_forme(v, n, d, est_domicile=True):
     bonus = 1.10 if est_domicile else 0.90
     return round(min(max(note_base * bonus, 1.5), 9.8), 1)
 
-# --- CHARGEMENT DES MATCHS ---
-all_matches = fetch_odds(league_map[league_choice], ODDS_API_KEY)
+# --- EXECUTION PROGRAMME PRINCIPAL ---
+all_matches = fetch_odds(league_map_odds[league_choice], ODDS_API_KEY)
+current_league_id = league_map_apisports[league_choice]
+teams_map = get_league_teams_map(current_league_id, API_SPORTS_KEY)
 
-# --- AFFICHAGE DASHBOARD ---
 if not all_matches:
     st.warning("Aucun match à venir trouvé pour cette compétition.")
 else:
@@ -153,14 +181,14 @@ else:
         cote_home = next((item['price'] for item in markets if item['name'] == home), 1.0)
         cote_away = next((item['price'] for item in markets if item['name'] == away), 1.0)
         
-        # Récupération automatique de la forme via l'API
-        data_h = get_team_last_5_results(home, API_SPORTS_KEY)
-        data_a = get_team_last_5_results(away, API_SPORTS_KEY)
+        # Récupération intelligente de la forme
+        data_h = get_team_last_5_results_smart(home, teams_map, API_SPORTS_KEY)
+        data_a = get_team_last_5_results_smart(away, teams_map, API_SPORTS_KEY)
         
         note_h = calculer_note_forme(data_h["v"], data_h["n"], data_h["d"], est_domicile=True)
         note_a = calculer_note_forme(data_a["v"], data_a["n"], data_a["d"], est_domicile=False)
         
-        # Calculs Poisson & xG
+        # Algorithme Poisson & xG
         diff_forme = (note_h - note_a) / 10.0
         lambda_base = max(1.8, 3.2 - (abs(cote_home - cote_away) * 0.2))
         lambda_buts = max(1.2, lambda_base + (diff_forme * 0.5))
@@ -181,7 +209,8 @@ else:
                 st.markdown("**📊 État de Forme Réel**")
                 st.write(f"• **{home}** (Dom) : **{note_h}/10** ({data_h['v']}V-{data_h['n']}N-{data_h['d']}D)")
                 st.write(f"• **{away}** (Ext) : **{note_a}/10** ({data_a['v']}V-{data_a['n']}N-{data_a['d']}D)")
-                st.caption(f"Source : {data_h['status']}")
+                st.caption(f"Source Home : {data_h['status']}")
+                st.caption(f"Source Away : {data_a['status']}")
                 
                 st.markdown("**💰 Cotes Bookmakers**")
                 st.write(f"1 ({home}) : **{cote_home}**")
