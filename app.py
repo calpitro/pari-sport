@@ -5,7 +5,7 @@ import requests
 
 st.set_page_config(page_title="🎯 QuantBet Auto - Foot & Tennis", layout="wide")
 st.title("🎯 QuantBet Studio - Dashboard Automatique")
-st.caption("Données API, Loi de Poisson, Surface & Vitesse de Court")
+st.caption("Données API, Effectifs, Loi de Poisson, Surface & Altitude")
 st.markdown("---")
 
 st.sidebar.header("⚙️ Configuration API")
@@ -21,17 +21,17 @@ sport_choice = st.sidebar.selectbox("Sélectionne le Sport :", ["Football", "Ten
 
 surface_choice = "Dur"
 vitesse_choice = "Médium"
+altitude_choice = False
 format_grand_chelem = False
 
 if sport_choice == "Tennis":
-    st.sidebar.subheader("🎾 Configuration Tournoi & Surface")
+    st.sidebar.subheader("🎾 Configuration Tournoi & Conditions")
     surface_choice = st.sidebar.selectbox("Surface du tournoi :", ["Dur", "Terre battue", "Gazon"])
-    
-    # Présélection ou réglage manuel de la vitesse de court
     vitesse_choice = st.sidebar.selectbox(
-        "Vitesse / Indice du Court :", 
+        "Vitesse du Court :", 
         ["Lent (ex: Montréal, Indian Wells)", "Médium (ex: US Open, Paris-Bercy)", "Rapide (ex: Cincinnati, Shanghai)"]
     )
+    altitude_choice = st.sidebar.checkbox("Tournoi en Altitude (> 500m, ex: Madrid, Gstaad)", value=False)
     format_grand_chelem = st.sidebar.checkbox("Format Grand Chelem (3 sets gagnants)", value=False)
 
 @st.cache_data(ttl=1800)
@@ -113,6 +113,31 @@ if not all_matches and sport_choice == "Football" and "Trophée des Champions" i
         }]
     }]
 
+# --- BASE DE DONNÉES EFFECTIFS ET JOUEURS ---
+EFFECTIFS_FOOT = {
+    "Paris SG": ["Donnarumma", "Marquinhos", "Hakimi", "Nuno Mendes", "Vitinha", "Zaïre-Emery", "Dembélé", "Barcola", "Kolo Muani"],
+    "Lens": ["Samba", "Gradit", "Medina", "Danso", "Frankowski", "Machado", "Diouf", "Sotoca", "Saïd"],
+    "Real Madrid": ["Courtois", "Carvajal", "Rüdiger", "Militao", "Mendy", "Valverde", "Bellingham", "Vinicius Jr", "Mbappé"],
+    "Barcelona": ["Ter Stegen", "Koundé", "Araujo", "Cubarsí", "Balde", "Pedri", "Gavi", "Yamal", "Lewandowski"],
+    "Manchester City": ["Ederson", "Walker", "Dias", "Akanji", "Gvardiol", "Rodri", "De Bruyne", "Foden", "Haaland"],
+    "Arsenal": ["Raya", "White", "Saliba", "Gabriel", "Timber", "Rice", "Odegaard", "Saka", "Martinelli", "Havertz"]
+}
+
+TENNIS_PROFILES = {
+    "Tsitsipas": {"main": "Droitier", "style": "Attaquant / Service-Volée", "aces_avg": 9},
+    "Auger-Aliassime": {"main": "Droitier", "style": "Puissant / Serveur", "aces_avg": 11},
+    "Fonseca": {"main": "Droitier", "style": "Attaquant de fond de court", "aces_avg": 6},
+    "van de Zandschulp": {"main": "Droitier", "style": "Polyvalent", "aces_avg": 6},
+    "Altmaier": {"main": "Droitier", "style": "Terre-battue / Revers 1 main", "aces_avg": 5},
+    "Musetti": {"main": "Droitier", "style": "Créatif / Revers 1 main", "aces_avg": 5},
+    "Hurkacz": {"main": "Droitier", "style": "Gros Serveur", "aces_avg": 14},
+    "Berrettini": {"main": "Droitier", "style": "Gros Serveur / Coup droit", "aces_avg": 12},
+    "Shelton": {"main": "Gaucher", "style": "Gros Serveur / Explosif", "aces_avg": 14},
+    "Sinner": {"main": "Droitier", "style": "Cadenceur de fond de court", "aces_avg": 8},
+    "Alcaraz": {"main": "Droitier", "style": "Complet / Variation", "aces_avg": 5},
+    "Djokovic": {"main": "Droitier", "style": "Relanceur / Contreur", "aces_avg": 7}
+}
+
 SERVEURS_TOP = {
     "Isner": 18, "Opelka": 17, "Karlovic": 19, "Hurkacz": 14, "Berrettini": 12,
     "Raonic": 15, "Kyrgios": 13, "Bublik": 12, "Zverev": 10, "Medvedev": 9,
@@ -120,7 +145,13 @@ SERVEURS_TOP = {
     "Sinner": 8, "Alcaraz": 5, "Djokovic": 7, "Rune": 7, "Monfils": 8
 }
 
-def analyser_rencontre(equipe_home, equipe_away, sport, cote_home, cote_away, surface="Dur", vitesse="Médium", is_gc=False):
+def get_tennis_profile(player_name):
+    for key, data in TENNIS_PROFILES.items():
+        if key.lower() in player_name.lower():
+            return data
+    return {"main": "Droitier", "style": "Standard", "aces_avg": 6}
+
+def analyser_rencontre(equipe_home, equipe_away, sport, cote_home, cote_away, surface="Dur", vitesse="Médium", is_alt=False, is_gc=False):
     seed_value = abs(hash(equipe_home + equipe_away)) % (2**32)
     np.random.seed(seed_value)
     
@@ -141,20 +172,12 @@ def analyser_rencontre(equipe_home, equipe_away, sport, cote_home, cote_away, su
         stats["over_2_5_prob"] = round(stats["over_1_5_prob"] - 0.22, 2)
         stats["btts_prob"] = round(0.52 + (0.08 if abs(cote_home - cote_away) < 0.8 else -0.06), 2)
         
-        buteurs_db = {
-            "Paris SG": ("Ousmane Dembélé", 2.20),
-            "Lens": ("Florian Sotoca", 3.40),
-            "Real Madrid": ("Kylian Mbappé", 1.85),
-            "Barcelona": ("Robert Lewandowski", 1.95),
-            "Manchester City": ("Erling Haaland", 1.65),
-            "Arsenal": ("Bukayo Saka", 2.50)
-        }
+        # Effectifs
+        eff_h = EFFECTIFS_FOOT.get(equipe_home, ["Joueurs clés non répertoriés"])
+        eff_a = EFFECTIFS_FOOT.get(equipe_away, ["Joueurs clés non répertoriés"])
         
-        buteur_h = buteurs_db.get(equipe_home, (f"Meilleur Buteur ({equipe_home})", 2.50))
-        buteur_a = buteurs_db.get(equipe_away, (f"Meilleur Buteur ({equipe_away})", 2.70))
-        
-        stats["buteur_home"] = f"{buteur_h[0]} @ {buteur_h[1]}"
-        stats["buteur_away"] = f"{buteur_a[0]} @ {buteur_a[1]}"
+        stats["eff_home"] = ", ".join(eff_h[:6]) + "..."
+        stats["eff_away"] = ", ".join(eff_a[:6]) + "..."
         
         summary = f"💡 **Analyse Poisson/xG :** Espérance de buts estimée à {round(lambda_buts, 2)} buts."
         stats["summary"] = summary
@@ -162,34 +185,22 @@ def analyser_rencontre(equipe_home, equipe_away, sport, cote_home, cote_away, su
         stats["forme_home"] = round(min(max(prob_mkt_home * 10 + 1.5, 3.0), 9.5), 1)
         stats["forme_away"] = round(min(max(prob_mkt_away * 10 + 1.5, 3.0), 9.5), 1)
         
-        # 1. Coef Surface globale
-        coef_surface = 1.0
-        if surface == "Terre battue":
-            coef_surface = 0.65
-        elif surface == "Gazon":
-            coef_surface = 1.35
-            
-        # 2. Coef Vitesse spécifique
-        coef_vitesse = 1.0
-        if "Lent" in vitesse:
-            coef_vitesse = 0.82
-        elif "Rapide" in vitesse:
-            coef_vitesse = 1.20
-            
+        coef_surface = 0.65 if surface == "Terre battue" else (1.35 if surface == "Gazon" else 1.0)
+        coef_vitesse = 0.82 if "Lent" in vitesse else (1.20 if "Rapide" in vitesse else 1.0)
+        coef_alt = 1.25 if is_alt else 1.0
         coef_format = 1.5 if is_gc else 1.0
         
-        aces_h_base = 6
-        aces_a_base = 6
+        prof_h = get_tennis_profile(equipe_home)
+        prof_a = get_tennis_profile(equipe_away)
         
-        for name, avg in SERVEURS_TOP.items():
-            if name.lower() in equipe_home.lower():
-                aces_h_base = avg
-            if name.lower() in equipe_away.lower():
-                aces_a_base = avg
-                
-        # Calcul combiné Surface x Vitesse x Format
-        aces_h_final = int(aces_h_base * coef_surface * coef_vitesse * coef_format)
-        aces_a_final = int(aces_a_base * coef_surface * coef_vitesse * coef_format)
+        stats["prof_home"] = f"{prof_h['main']} | {prof_h['style']}"
+        stats["prof_away"] = f"{prof_a['main']} | {prof_a['style']}"
+        
+        aces_h_base = prof_h["aces_avg"]
+        aces_a_base = prof_a["aces_avg"]
+        
+        aces_h_final = int(aces_h_base * coef_surface * coef_vitesse * coef_alt * coef_format)
+        aces_a_final = int(aces_a_base * coef_surface * coef_vitesse * coef_alt * coef_format)
         
         stats["aces_home"] = aces_h_final
         stats["aces_away"] = aces_a_final
@@ -207,7 +218,7 @@ def analyser_rencontre(equipe_home, equipe_away, sport, cote_home, cote_away, su
         else:
             stats["cote_aces_fav"] = "Volume d'aces équivalent attendu"
 
-        stats["summary"] = f"💡 **Analyse Court :** Surface **{surface}** | Vitesse : **{vitesse.split(' ')[0]}** (Impact Aces x{round(coef_surface * coef_vitesse, 2)})."
+        stats["summary"] = f"💡 **Conditions :** {surface} ({vitesse.split(' ')[0]}) | Altitude : {'Oui (+25% aces)' if is_alt else 'Non'}"
         
     return stats
 
@@ -230,7 +241,7 @@ else:
         cote_away = next((item['price'] for item in markets if item['name'] == away), 1.0)
         
         is_foot = (sport_choice == "Football")
-        stats = analyser_rencontre(home, away, sport_choice, cote_home, cote_away, surface_choice, vitesse_choice, format_grand_chelem)
+        stats = analyser_rencontre(home, away, sport_choice, cote_home, cote_away, surface_choice, vitesse_choice, altitude_choice, format_grand_chelem)
         
         prob_algo_home = (1 / cote_home)
         prob_algo_away = (1 / cote_away)
@@ -254,17 +265,18 @@ else:
                 st.write(f"Prob. {away} : **{int(prob_algo_away*100)}%**")
                 
                 if is_foot:
-                    st.markdown("**⚽ Métriques & Buteurs**")
+                    st.markdown("**⚽ Métriques & Effectifs**")
                     st.write(f"• BTTS (Oui) : **{int(stats['btts_prob']*100)}%**")
                     st.write(f"• Over 1.5 buts : **{int(stats['over_1_5_prob']*100)}%**")
-                    st.write(f"• Option Buteur {home} : **{stats['buteur_home']}**")
-                    st.write(f"• Option Buteur {away} : **{stats['buteur_away']}**")
+                    st.caption(f"👥 **{home}** : {stats['eff_home']}")
+                    st.caption(f"👥 **{away}** : {stats['eff_away']}")
                 else:
-                    st.markdown("**🎾 Paliers & Aces Winamax**")
+                    st.markdown("**🎾 Profils & Paliers Aces**")
+                    st.caption(f"👤 **{home}** : {stats['prof_home']}")
+                    st.caption(f"👤 **{away}** : {stats['prof_away']}")
                     st.write(f"• Est. Aces : **{stats['aces_home']}** ({home}) / **{stats['aces_away']}** ({away})")
                     st.write(f"• {stats['palier_h']}")
                     st.write(f"• {stats['palier_a']}")
-                    st.caption(f"🏆 {stats['cote_aces_fav']}")
 
             with c3:
                 st.markdown("**🎯 Value Bets Détectées**")
