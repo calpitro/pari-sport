@@ -2,24 +2,18 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
-import difflib
 
 st.set_page_config(page_title="🎯 QuantBet Auto - Football Studio", layout="wide")
 st.title("⚽ QuantBet Studio - Dashboard Football Auto")
-st.caption("Données API-Sports & The Odds API | Analyse Poisson/xG & Mapping Direct ID")
+st.caption("Données The Odds API | Modélisation Poisson/xG & Forme Personnalisable")
 st.markdown("---")
 
 # --- CONFIGURATION DES CLÉS API EN SIDEBAR ---
-st.sidebar.header("⚙️ Configuration APIs")
+st.sidebar.header("⚙️ Configuration API")
 ODDS_API_KEY = st.sidebar.text_input("Clé The Odds API :", type="password")
-API_SPORTS_KEY = st.sidebar.text_input(
-    "Clé API-Sports (dashboard.api-football.com) :", 
-    type="password", 
-    help="Utilisée pour récupérer les 5 derniers résultats"
-)
 
 if not ODDS_API_KEY:
-    st.warning("👈 Veuillez entrer votre clé The Odds API dans le panneau de gauche pour démarrer.")
+    st.warning("👈 Veuillez entrer votre clé The Odds API dans le panneau de gauche pour charger les matchs.")
     st.stop()
 
 # --- SÉLECTION DE LA COMPÉTITION ---
@@ -48,21 +42,7 @@ league_map_odds = {
     "🇪🇺 Europe - Ligue Europa": "soccer_uefa_europa_league"
 }
 
-# --- DICTIONNAIRE D'URGENCE POUR LES IDENTIFIANTS API-SPORTS ---
-KNOWN_TEAM_IDS = {
-    # Ligue 1 / Ligue 2 France
-    "Marseille": 81, "Strasbourg": 95, "RC Lens": 116, "Auxerre": 96,
-    "USL Dunkerque": 128, "Red Star": 105, "Pau FC": 122, "Nancy": 92,
-    "Montpellier": 82, "Paris Saint Germain": 85, "PSG": 85, "Monaco": 91,
-    "Lille": 79, "Lyon": 80, "Rennes": 94, "Nice": 84, "Nantes": 83,
-    "Toulouse": 97, "Reims": 93, "Brest": 106, "Saint Etienne": 1063,
-    "Le Havre": 885, "Angers": 77, "Lorient": 99, "Metz": 112, "Clermont": 98,
-    # Premier League
-    "Arsenal": 42, "Chelsea": 49, "Liverpool": 40, "Manchester City": 50,
-    "Manchester United": 33, "Tottenham": 47, "Real Madrid": 541, "Barcelona": 529
-}
-
-# --- FONCTION : RÉCUPÉRATION COTES ---
+# --- FONCTION : RÉCUPÉRATION COTES (The Odds API) ---
 @st.cache_data(ttl=1800)
 def fetch_odds(s_key, api_k):
     url = f"https://api.the-odds-api.com/v4/sports/{s_key}/odds/?apiKey={api_k}&regions=eu&markets=h2h&oddsFormat=decimal"
@@ -74,79 +54,7 @@ def fetch_odds(s_key, api_k):
         pass
     return []
 
-# --- FONCTION : RESOLUTION DE L'ID DE L'EQUIPE ---
-def resolve_team_id(team_name, api_key):
-    # 1. Vérification dans la table connue
-    for known_name, t_id in KNOWN_TEAM_IDS.items():
-        if known_name.lower() in team_name.lower() or team_name.lower() in known_name.lower():
-            return t_id, known_name
-            
-    # 2. Requête API directe si absent de la table
-    if not api_key:
-        return None, team_name
-        
-    headers = {"x-apisports-key": api_key}
-    clean_name = team_name.replace("USL ", "").replace("FC ", "").replace("AS ", "").replace("RC ", "").strip()
-    search_url = f"https://v3.football.api-sports.io/teams?search={clean_name}"
-    
-    try:
-        res = requests.get(search_url, headers=headers).json()
-        if res.get("response"):
-            return res["response"][0]["team"]["id"], res["response"][0]["team"]["name"]
-    except Exception:
-        pass
-        
-    return None, team_name
-
-# --- FONCTION : 5 DERNIERS MATCHS FIABLES ---
-@st.cache_data(ttl=3600)
-def get_team_last_5_results_robust(team_name, api_key):
-    if not api_key:
-        return {"v": 2, "n": 2, "d": 1, "status": "Simulé (Pas de clé API-Sports)"}
-
-    team_id, resolved_name = resolve_team_id(team_name, api_key)
-    
-    if not team_id:
-        return {"v": 2, "n": 2, "d": 1, "status": f"Non trouvé ({team_name})"}
-
-    headers = {"x-apisports-key": api_key}
-    
-    # Récupération sur les saisons 2024 et 2025 pour couvrir les amicals et trêves
-    for season in [2024, 2025, 2023]:
-        fixtures_url = f"https://v3.football.api-sports.io/fixtures?team={team_id}&season={season}&last=5"
-        try:
-            res_fix = requests.get(fixtures_url, headers=headers).json()
-            match_list = res_fix.get("response", [])
-            
-            if match_list:
-                v, n, d = 0, 0, 0
-                for m in match_list:
-                    gh = m["goals"]["home"]
-                    ga = m["goals"]["away"]
-                    is_home = m["teams"]["home"]["id"] == team_id
-                    
-                    if gh is None or ga is None:
-                        continue
-                        
-                    if gh == ga:
-                        n += 1
-                    elif (is_home and gh > ga) or (not is_home and ga > gh):
-                        v += 1
-                    else:
-                        d += 1
-                return {"v": v, "n": n, "d": d, "status": f"Auto ({resolved_name})"}
-        except Exception:
-            continue
-            
-    return {"v": 2, "n": 2, "d": 1, "status": f"Aucun match ({resolved_name})"}
-
-def calculer_note_forme(v, n, d, est_domicile=True):
-    pts = (v * 3) + (n * 1)
-    note_base = (pts / 15.0) * 10
-    bonus = 1.10 if est_domicile else 0.90
-    return round(min(max(note_base * bonus, 1.5), 9.8), 1)
-
-# --- EXECUTION PROGRAMME PRINCIPAL ---
+# --- CHARGEMENT DES MATCHS ---
 all_matches = fetch_odds(league_map_odds[league_choice], ODDS_API_KEY)
 
 if not all_matches:
@@ -154,7 +62,7 @@ if not all_matches:
 else:
     st.success(f"✅ {len(all_matches)} match(s) chargé(s) pour {league_choice} !")
     
-    for match in all_matches:
+    for idx, match in enumerate(all_matches):
         home = match['home_team']
         away = match['away_team']
         
@@ -165,41 +73,31 @@ else:
         markets = bookmakers[0]['markets'][0]['outcomes']
         cote_home = next((item['price'] for item in markets if item['name'] == home), 1.0)
         cote_away = next((item['price'] for item in markets if item['name'] == away), 1.0)
-        
-        # Récupération robuste avec ID direct + Fallback
-        data_h = get_team_last_5_results_robust(home, API_SPORTS_KEY)
-        data_a = get_team_last_5_results_robust(away, API_SPORTS_KEY)
-        
-        note_h = calculer_note_forme(data_h["v"], data_h["n"], data_h["d"], est_domicile=True)
-        note_a = calculer_note_forme(data_a["v"], data_a["n"], data_a["d"], est_domicile=False)
-        
-        # Algorithme Poisson & xG
-        diff_forme = (note_h - note_a) / 10.0
-        lambda_base = max(1.8, 3.2 - (abs(cote_home - cote_away) * 0.2))
-        lambda_buts = max(1.2, lambda_base + (diff_forme * 0.5))
-        
-        prob_0_buts = np.exp(-lambda_buts)
-        prob_1_but = lambda_buts * np.exp(-lambda_buts)
-        prob_over_1_5 = round(1.0 - (prob_0_buts + prob_1_but), 2)
-        prob_over_2_5 = round(prob_over_1_5 - 0.22, 2)
-        prob_btts = round(0.52 + (0.08 if abs(cote_home - cote_away) < 0.8 else -0.06) + (diff_forme * 0.05), 2)
-        prob_btts = min(max(prob_btts, 0.30), 0.85)
 
         with st.expander(f"⚽ {home} vs {away}", expanded=True):
-            st.info(f"💡 **Analyse Poisson/xG :** Espérance de buts estimée à **{round(lambda_buts, 2)} buts** (Ajustée à la forme Domicile/Extérieur).")
             
             c1, c2, c3 = st.columns([1, 1, 1])
             
             with c1:
-                st.markdown("**📊 État de Forme Réel**")
-                st.write(f"• **{home}** (Dom) : **{note_h}/10** ({data_h['v']}V-{data_h['n']}N-{data_h['d']}D)")
-                st.write(f"• **{away}** (Ext) : **{note_a}/10** ({data_a['v']}V-{data_a['n']}N-{data_a['d']}D)")
-                st.caption(f"Source Home : {data_h['status']}")
-                st.caption(f"Source Away : {data_a['status']}")
+                st.markdown("**📊 Forme des Équipes (Sur 10)**")
+                note_h = st.slider(f"Forme {home} (Dom)", 1.0, 10.0, 5.0, 0.5, key=f"h_{idx}")
+                note_a = st.slider(f"Forme {away} (Ext)", 1.0, 10.0, 5.0, 0.5, key=f"a_{idx}")
                 
                 st.markdown("**💰 Cotes Bookmakers**")
                 st.write(f"1 ({home}) : **{cote_home}**")
                 st.write(f"2 ({away}) : **{cote_away}**")
+
+            # Calculations Poisson & xG réactifs
+            diff_forme = (note_h - note_a) / 10.0
+            lambda_base = max(1.8, 3.2 - (abs(cote_home - cote_away) * 0.2))
+            lambda_buts = max(1.2, lambda_base + (diff_forme * 0.5))
+            
+            prob_0_buts = np.exp(-lambda_buts)
+            prob_1_but = lambda_buts * np.exp(-lambda_buts)
+            prob_over_1_5 = round(1.0 - (prob_0_buts + prob_1_but), 2)
+            prob_over_2_5 = round(prob_over_1_5 - 0.22, 2)
+            prob_btts = round(0.52 + (0.08 if abs(cote_home - cote_away) < 0.8 else -0.06) + (diff_forme * 0.05), 2)
+            prob_btts = min(max(prob_btts, 0.30), 0.85)
 
             with c2:
                 prob_algo_home = int((1 / cote_home) * 100)
@@ -209,7 +107,8 @@ else:
                 st.write(f"Prob. {home} : **{prob_algo_home}%**")
                 st.write(f"Prob. {away} : **{prob_algo_away}%**")
                 
-                st.markdown("**⚽ Métriques Buts**")
+                st.markdown("**⚽ Métriques Buts (xG)**")
+                st.write(f"• Espérance de buts : **{round(lambda_buts, 2)}**")
                 st.write(f"• BTTS (Les 2 marquent) : **{int(prob_btts*100)}%**")
                 st.write(f"• Over 1.5 buts : **{int(prob_over_1_5*100)}%**")
                 st.write(f"• Over 2.5 buts : **{int(prob_over_2_5*100)}%**")
@@ -219,10 +118,10 @@ else:
                 has_value = False
                 
                 if note_h >= 7.0 and prob_algo_home < 55:
-                    st.success(f"VALUE : Victoire {home} (Excellente forme dom)")
+                    st.success(f"VALUE : Victoire {home} (Bonne forme dom)")
                     has_value = True
                 elif note_a >= 7.0 and prob_algo_away < 45:
-                    st.success(f"VALUE : Victoire {away} (Excellente forme ext)")
+                    st.success(f"VALUE : Victoire {away} (Bonne forme ext)")
                     has_value = True
                     
                 if prob_over_1_5 > 0.78:
