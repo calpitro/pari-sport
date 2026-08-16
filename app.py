@@ -5,15 +5,15 @@ import requests
 
 st.set_page_config(page_title="🎯 QuantBet Auto - Foot & Tennis", layout="wide")
 st.title("🎯 QuantBet Studio - Dashboard Automatique")
-st.caption("Données API, Loi de Poisson, Forme Récente & Bilan Domicile/Extérieur")
+st.caption("Données API, Scraping Auto des 5 derniers matchs & Calcul de Forme")
 st.markdown("---")
 
 st.sidebar.header("⚙️ Configuration API")
-API_KEY = st.sidebar.text_input("Entre ta clé The Odds API :", type="password")
+ODDS_API_KEY = st.sidebar.text_input("Clé The Odds API :", type="password")
+FOOTBALL_API_KEY = st.sidebar.text_input("Clé API-Football (RapidAPI) :", type="password", help="Optionnel : pour charger la forme automatique")
 
-if not API_KEY:
-    st.warning("👈 Veuillez entrer votre clé API dans le panneau de gauche.")
-    st.info("Obtenez une clé gratuite sur : https://the-odds-api.com/")
+if not ODDS_API_KEY:
+    st.warning("👈 Veuillez entrer au moins votre clé The Odds API dans le panneau de gauche.")
     st.stop()
 
 # --- SÉLECTION DU SPORT & OPTIONS TENNIS ---
@@ -31,20 +31,8 @@ if sport_choice == "Tennis":
         "Vitesse du Court :", 
         ["Lent (ex: Montréal, Indian Wells)", "Médium (ex: US Open, Paris-Bercy)", "Rapide (ex: Cincinnati, Shanghai)"]
     )
-    altitude_choice = st.sidebar.checkbox("Tournoi en Altitude (> 500m, ex: Madrid, Gstaad)", value=False)
-    format_grand_chelem = st.sidebar.checkbox("Format Grand Chelem (3 sets gagnants)", value=False)
-
-@st.cache_data(ttl=1800)
-def get_active_tennis_keys(api_k):
-    url = f"https://api.the-odds-api.com/v4/sports/?apiKey={api_k}"
-    try:
-        res = requests.get(url)
-        if res.status_code == 200:
-            sports = res.json()
-            return [s['key'] for s in sports if 'tennis' in s['key'].lower()]
-    except Exception:
-        pass
-    return ["tennis_atp", "tennis_wta"]
+    altitude_choice = st.sidebar.checkbox("Tournoi en Altitude (> 500m)", value=False)
+    format_grand_chelem = st.sidebar.checkbox("Format Grand Chelem (3 sets)", value=False)
 
 @st.cache_data(ttl=1800)
 def fetch_odds(s_key, api_k):
@@ -57,269 +45,127 @@ def fetch_odds(s_key, api_k):
         pass
     return []
 
+# --- FONCTION AUTO-FETCH DES 5 DERNIERS MATCHS ---
+@st.cache_data(ttl=3600)
+def get_team_last_5_results(team_name, api_key):
+    """
+    Interroge l'API Football pour récupérer le bilan réel des 5 derniers matchs
+    """
+    if not api_key:
+        return {"v": 3, "n": 1, "d": 1, "status": "Simulé (Pas de clé API-Football)"}
+
+    headers = {
+        "x-rapidapi-key": api_key,
+        "x-rapidapi-host": "v3.football.api-sports.io"
+    }
+    
+    try:
+        # 1. Recherche de l'ID de l'équipe
+        search_url = f"https://v3.football.api-sports.io/teams?search={team_name}"
+        res_team = requests.get(search_url, headers=headers).json()
+        
+        if not res_team.get("response"):
+            return {"v": 2, "n": 2, "d": 1, "status": "Équipe non trouvée"}
+            
+        team_id = res_team["response"][0]["team"]["id"]
+        
+        # 2. Récupération des 5 derniers matchs
+        fixtures_url = f"https://v3.football.api-sports.io/fixtures?team={team_id}&last=5"
+        res_fix = requests.get(fixtures_url, headers=headers).json()
+        
+        v, n, d = 0, 0, 0
+        for match in res_fix.get("response", []):
+            goals_home = match["goals"]["home"]
+            goals_away = match["goals"]["away"]
+            is_home = match["teams"]["home"]["id"] == team_id
+            
+            if goals_home == goals_away:
+                n += 1
+            elif (is_home and goals_home > goals_away) or (not is_home and goals_away > goals_home):
+                v += 1
+            else:
+                d += 1
+                
+        return {"v": v, "n": n, "d": d, "status": "Auto (API)"}
+    except Exception:
+        return {"v": 2, "n": 2, "d": 1, "status": "Erreur connexion"}
+
+def calculer_note_forme(v, n, d, est_domicile=True):
+    pts = (v * 3) + (n * 1)
+    note_base = (pts / 15.0) * 10
+    bonus = 1.10 if est_domicile else 0.90
+    return round(min(max(note_base * bonus, 1.5), 9.8), 1)
+
+# --- RECUPERATION DES MATCHS ---
 all_matches = []
 league_choice = ""
 
 if sport_choice == "Football":
     league_choice = st.sidebar.selectbox(
         "Sélectionne la compétition :",
-        [
-            "🇫🇷 France - Ligue 1",
-            "🇫🇷 France - Coupe de France",
-            "🇫🇷 France - Trophée des Champions",
-            "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Angleterre - Premier League",
-            "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Angleterre - FA Cup",
-            "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Angleterre - EFL Cup (League Cup)",
-            "🇪🇸 Espagne - La Liga",
-            "🇪🇸 Espagne - Copa del Rey",
-            "🇪🇸 Espagne - Supercopa de España",
-            "🇪🇺 Europe - Ligue des Champions",
-            "🇪🇺 Europe - Ligue Europa"
-        ]
+        ["🇫🇷 France - Ligue 1", "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Angleterre - Premier League", "🇪🇸 Espagne - La Liga", "🇪🇺 Europe - Ligue des Champions"]
     )
     league_map = {
         "🇫🇷 France - Ligue 1": "soccer_france_ligue_one",
-        "🇫🇷 France - Coupe de France": "soccer_france_coupe_de_france",
-        "🇫🇷 France - Trophée des Champions": "soccer_france_trophee_des_champions",
         "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Angleterre - Premier League": "soccer_epl",
-        "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Angleterre - FA Cup": "soccer_fa_cup",
-        "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Angleterre - EFL Cup (League Cup)": "soccer_efl_champ",
         "🇪🇸 Espagne - La Liga": "soccer_spain_la_liga",
-        "🇪🇸 Espagne - Copa del Rey": "soccer_spain_copa_del_rey",
-        "🇪🇸 Espagne - Supercopa de España": "soccer_spain_super_cup",
-        "🇪🇺 Europe - Ligue des Champions": "soccer_uefa_champs_league",
-        "🇪🇺 Europe - Ligue Europa": "soccer_uefa_europa_league"
+        "🇪🇺 Europe - Ligue des Champions": "soccer_uefa_champs_league"
     }
-    all_matches = fetch_odds(league_map[league_choice], API_KEY)
-else:
-    tennis_keys = get_active_tennis_keys(API_KEY)
-    for key in tennis_keys:
-        matches = fetch_odds(key, API_KEY)
-        if matches:
-            all_matches.extend(matches)
-
-# FALLBACK FOOTBALL
-if not all_matches and sport_choice == "Football" and "Trophée des Champions" in league_choice:
-    all_matches = [{
-        'home_team': 'Lens',
-        'away_team': 'Paris SG',
-        'bookmakers': [{
-            'markets': [{
-                'outcomes': [
-                    {'name': 'Lens', 'price': 4.30},
-                    {'name': 'Paris SG', 'price': 1.68}
-                ]
-            }]
-        }]
-    }]
-
-TENNIS_PROFILES = {
-    "Tsitsipas": {"main": "Droitier", "style": "Attaquant / Service-Volée", "aces_avg": 9},
-    "Auger-Aliassime": {"main": "Droitier", "style": "Puissant / Serveur", "aces_avg": 11},
-    "Fonseca": {"main": "Droitier", "style": "Attaquant de fond de court", "aces_avg": 6},
-    "van de Zandschulp": {"main": "Droitier", "style": "Polyvalent", "aces_avg": 6},
-    "Altmaier": {"main": "Droitier", "style": "Terre-battue / Revers 1 main", "aces_avg": 5},
-    "Musetti": {"main": "Droitier", "style": "Créatif / Revers 1 main", "aces_avg": 5},
-    "Hurkacz": {"main": "Droitier", "style": "Gros Serveur", "aces_avg": 14},
-    "Berrettini": {"main": "Droitier", "style": "Gros Serveur / Coup droit", "aces_avg": 12},
-    "Shelton": {"main": "Gaucher", "style": "Gros Serveur / Explosif", "aces_avg": 14},
-    "Sinner": {"main": "Droitier", "style": "Cadenceur de fond de court", "aces_avg": 8},
-    "Alcaraz": {"main": "Droitier", "style": "Complet / Variation", "aces_avg": 5},
-    "Djokovic": {"main": "Droitier", "style": "Relanceur / Contreur", "aces_avg": 7}
-}
-
-def calculer_note_forme(v, n, d, est_domicile=True):
-    # Calcul des points sur les 5 derniers matchs
-    total_matchs = max(v + n + d, 1)
-    pts = (v * 3) + (n * 1)
-    note_base = (pts / (total_matchs * 3)) * 10
-    
-    # Bonus/Malus selon l'impact terrain
-    if est_domicile:
-        note_finale = note_base * 1.10
-    else:
-        note_finale = note_base * 0.90
-        
-    return round(min(max(note_finale, 1.5), 9.8), 1)
-
-def get_tennis_profile(player_name):
-    for key, data in TENNIS_PROFILES.items():
-        if key.lower() in player_name.lower():
-            return data
-    return {"main": "Droitier", "style": "Standard", "aces_avg": 6}
-
-def analyser_rencontre(equipe_home, equipe_away, sport, cote_home, cote_away, 
-                       forme_h_val=7.0, forme_a_val=5.0, 
-                       surface="Dur", vitesse="Médium", is_alt=False, is_gc=False):
-    
-    prob_mkt_home = 1 / cote_home
-    prob_mkt_away = 1 / cote_away
-    
-    stats = {}
-    
-    if sport == "Football":
-        stats["forme_home"] = forme_h_val
-        stats["forme_away"] = forme_a_val
-        
-        # Ajustement dynamique du xG (lambda) selon le différentiel de forme réelle
-        diff_forme = (forme_h_val - forme_a_val) / 10.0
-        lambda_base = max(1.8, 3.2 - (abs(cote_home - cote_away) * 0.2))
-        lambda_buts = max(1.2, lambda_base + (diff_forme * 0.5))
-        
-        prob_0_buts = np.exp(-lambda_buts)
-        prob_1_but = lambda_buts * np.exp(-lambda_buts)
-        
-        stats["over_1_5_prob"] = round(1.0 - (prob_0_buts + prob_1_but), 2)
-        stats["over_2_5_prob"] = round(stats["over_1_5_prob"] - 0.22, 2)
-        stats["btts_prob"] = round(0.52 + (0.08 if abs(cote_home - cote_away) < 0.8 else -0.06) + (diff_forme * 0.05), 2)
-        stats["btts_prob"] = min(max(stats["btts_prob"], 0.30), 0.85)
-        
-        summary = f"💡 **Analyse Poisson/xG :** Espérance de buts estimée à {round(lambda_buts, 2)} buts (Pondération forme Domicile/Extérieur)."
-        stats["summary"] = summary
-    else:
-        stats["forme_home"] = forme_h_val
-        stats["forme_away"] = forme_a_val
-        
-        coef_surface = 0.65 if surface == "Terre battue" else (1.35 if surface == "Gazon" else 1.0)
-        coef_vitesse = 0.82 if "Lent" in vitesse else (1.20 if "Rapide" in vitesse else 1.0)
-        coef_alt = 1.25 if is_alt else 1.0
-        coef_format = 1.5 if is_gc else 1.0
-        
-        prof_h = get_tennis_profile(equipe_home)
-        prof_a = get_tennis_profile(equipe_away)
-        
-        stats["prof_home"] = f"{prof_h['main']} | {prof_h['style']}"
-        stats["prof_away"] = f"{prof_a['main']} | {prof_a['style']}"
-        
-        aces_h_base = prof_h["aces_avg"]
-        aces_a_base = prof_a["aces_avg"]
-        
-        aces_h_final = int(aces_h_base * coef_surface * coef_vitesse * coef_alt * coef_format)
-        aces_a_final = int(aces_a_base * coef_surface * coef_vitesse * coef_alt * coef_format)
-        
-        stats["aces_home"] = aces_h_final
-        stats["aces_away"] = aces_a_final
-        
-        palier_h = max(3.5, np.floor(aces_h_final - 1) + 0.5)
-        palier_a = max(3.5, np.floor(aces_a_final - 1) + 0.5)
-        
-        stats["palier_h"] = f"Over {palier_h} Aces ({equipe_home}) @ 1.80"
-        stats["palier_a"] = f"Over {palier_a} Aces ({equipe_away}) @ 1.80"
-        
-        if aces_h_final > aces_a_final:
-            stats["cote_aces_fav"] = f"Plus d'aces : {equipe_home} (@ 1.55)"
-        elif aces_a_final > aces_h_final:
-            stats["cote_aces_fav"] = f"Plus d'aces : {equipe_away} (@ 1.60)"
-        else:
-            stats["cote_aces_fav"] = "Volume d'aces équivalent attendu"
-
-        stats["summary"] = f"💡 **Conditions :** {surface} ({vitesse.split(' ')[0]}) | Altitude : {'Oui (+25% aces)' if is_alt else 'Non'}"
-        
-    return stats
+    all_matches = fetch_odds(league_map[league_choice], ODDS_API_KEY)
 
 # --- AFFICHAGE ---
 if not all_matches:
-    st.warning("Aucun match à venir trouvé actuellement pour cette compétition.")
+    st.warning("Aucun match trouvé.")
 else:
     st.success(f"✅ {len(all_matches)} match(s) chargé(s) !")
     
     for match in all_matches:
         home = match['home_team']
         away = match['away_team']
-        bookmakers = match.get('bookmakers', [])
+        markets = match.get('bookmakers', [{}])[0].get('markets', [{}])[0].get('outcomes', [])
         
-        if not bookmakers:
-            continue
-            
-        markets = bookmakers[0]['markets'][0]['outcomes']
         cote_home = next((item['price'] for item in markets if item['name'] == home), 1.0)
         cote_away = next((item['price'] for item in markets if item['name'] == away), 1.0)
         
-        is_foot = (sport_choice == "Football")
+        # Récupération automatique des 5 derniers matchs
+        data_h = get_team_last_5_results(home, FOOTBALL_API_KEY)
+        data_a = get_team_last_5_results(away, FOOTBALL_API_KEY)
+        
+        note_h = calculer_note_forme(data_h["v"], data_h["n"], data_h["d"], est_domicile=True)
+        note_a = calculer_note_forme(data_a["v"], data_a["n"], data_a["d"], est_domicile=False)
         
         with st.expander(f"⚔️ {home} vs {away}", expanded=True):
-            
-            # MODULE DE SAISIE DE FORME DYNAMIQUE
-            st.markdown("**⚙️ Module Forme Récente (Derniers Matchs)**")
-            f_col1, f_col2 = st.columns(2)
-            
-            with f_col1:
-                st.caption(f"🏠 Bilan Domicile de **{home}**")
-                vh = st.number_input(f"Victoires ({home})", 0, 5, 3, key=f"vh_{home}_{away}")
-                nh = st.number_input(f"Nuls ({home})", 0, 5, 1, key=f"nh_{home}_{away}")
-                dh = st.number_input(f"Défaites ({home})", 0, 5, 1, key=f"dh_{home}_{away}")
-                note_h = calculer_note_forme(vh, nh, dh, est_domicile=True)
-                
-            with f_col2:
-                st.caption(f"✈️ Bilan Extérieur de **{away}**")
-                va = st.number_input(f"Victoires ({away})", 0, 5, 1, key=f"va_{home}_{away}")
-                na = st.number_input(f"Nuls ({away})", 0, 5, 2, key=f"na_{home}_{away}")
-                da = st.number_input(f"Défaites ({away})", 0, 5, 2, key=f"da_{home}_{away}")
-                note_a = calculer_note_forme(va, na, da, est_domicile=False)
-            
-            # ANALYSE ET CALCUL
-            stats = analyser_rencontre(
-                home, away, sport_choice, cote_home, cote_away, 
-                forme_h_val=note_h, forme_a_val=note_a, 
-                surface=surface_choice, vitesse=vitesse_choice, 
-                is_alt=altitude_choice, is_gc=format_grand_chelem
-            )
-            
-            st.info(stats["summary"])
-            
-            prob_algo_home = (1 / cote_home)
-            prob_algo_away = (1 / cote_away)
-            
             c1, c2, c3 = st.columns([1, 1, 1])
             
             with c1:
-                st.markdown("**📊 État de Forme Réel**")
-                st.write(f"• {home} (Dom) : **{stats['forme_home']}/10**")
-                st.write(f"• {away} (Ext) : **{stats['forme_away']}/10**")
+                st.markdown("**📊 Forme Auto (5 derniers matchs)**")
+                st.write(f"• **{home}** (Dom) : **{note_h}/10** ({data_h['v']}V-{data_h['n']}N-{data_h['d']}D)")
+                st.write(f"• **{away}** (Ext) : **{note_a}/10** ({data_a['v']}V-{data_a['n']}N-{data_a['d']}D)")
+                st.caption(f"Source données : {data_h['status']}")
+                
                 st.markdown("**💰 Cotes Vainqueur**")
-                st.write(f"1 ({home}) : **{cote_home}**")
-                st.write(f"2 ({away}) : **{cote_away}**")
+                st.write(f"1 ({home}) : **{cote_home}** | 2 ({away}) : **{cote_away}**")
 
             with c2:
+                prob_h = int((1 / cote_home) * 100)
+                prob_a = int((1 / cote_away) * 100)
                 st.markdown("**🤖 Estimation Algo**")
-                st.write(f"Prob. {home} : **{int(prob_algo_home*100)}%**")
-                st.write(f"Prob. {away} : **{int(prob_algo_away*100)}%**")
+                st.write(f"Prob. {home} : **{prob_h}%** | Prob. {away} : **{prob_a}%**")
                 
-                if is_foot:
-                    st.markdown("**⚽ Métriques Marchés**")
-                    st.write(f"• BTTS (Oui) : **{int(stats['btts_prob']*100)}%**")
-                    st.write(f"• Over 1.5 buts : **{int(stats['over_1_5_prob']*100)}%**")
-                    st.write(f"• Over 2.5 buts : **{int(stats['over_2_5_prob']*100)}%**")
-                else:
-                    st.markdown("**🎾 Profils & Paliers Aces**")
-                    st.caption(f"👤 **{home}** : {stats['prof_home']}")
-                    st.caption(f"👤 **{away}** : {stats['prof_away']}")
-                    st.write(f"• Est. Aces : **{stats['aces_home']}** ({home}) / **{stats['aces_away']}** ({away})")
-                    st.write(f"• {stats['palier_h']}")
-                    st.write(f"• {stats['palier_a']}")
+                diff_forme = (note_h - note_a) / 10.0
+                lambda_buts = max(1.2, 2.5 + (diff_forme * 0.6))
+                
+                st.markdown("**⚽ Métriques Marchés**")
+                st.write(f"• xG Estimé : **{round(lambda_buts, 2)} buts**")
+                st.write(f"• Over 1.5 buts : **{int(min(lambda_buts * 30, 88))}%**")
 
             with c3:
-                st.markdown("**🎯 Value Bets Détectées**")
-                if is_foot:
-                    has_val_foot = False
-                    if stats['over_1_5_prob'] > 0.78:
-                        st.success("VALUE : Over 1.5 Buts")
-                        has_val_foot = True
-                    if stats['btts_prob'] > 0.58:
-                        st.success("VALUE : Les 2 équipes marquent")
-                        has_val_foot = True
-                    if not has_val_foot:
-                        st.info("Aucune Value majeure détectée.")
+                st.markdown("**🎯 Value Bets**")
+                if note_h >= 7.0 and prob_h < 60:
+                    st.success(f"VALUE : Victoire {home} (Bonne forme dom)")
+                elif note_a >= 7.0 and prob_a < 50:
+                    st.success(f"VALUE : Victoire {away} (Bonne forme ext)")
+                elif lambda_buts > 2.7:
+                    st.success("VALUE : Over 2.5 Buts")
                 else:
-                    has_value = False
-                    if stats['aces_home'] >= (14 if format_grand_chelem else 10):
-                        st.success(f"VALUE : {stats['palier_h']}")
-                        has_value = True
-                    if stats['aces_away'] >= (14 if format_grand_chelem else 10):
-                        st.success(f"VALUE : {stats['palier_a']}")
-                        has_value = True
-                    if abs(cote_home - cote_away) < 0.25:
-                        st.success("VALUE : Over Games / Match accroché")
-                        has_value = True
-                    if not has_value:
-                        st.info("Aucune Value majeure détectée.")
+                    st.info("Aucune Value majeure")
