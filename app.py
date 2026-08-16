@@ -9,7 +9,7 @@ st.set_page_config(
     page_title="QuantBet Pro - Master Engine xG", page_icon="⚽", layout="wide"
 )
 
-st.title("⚽ QuantBet Pro - Moteur Avancé (Détails des Probabilités)")
+st.title("⚽ QuantBet Pro - Moteur d'Analyse Avancé & Contexte")
 st.markdown("---")
 
 # ==========================================
@@ -183,29 +183,49 @@ else:
 
         h_for, h_ag = fetch_rapidapi_stats(home_team, RAPID_API_KEY)
         a_for, a_ag = fetch_rapidapi_stats(away_team, RAPID_API_KEY)
-        xg_home, xg_away = round(h_for * (a_ag / 1.2) * 1.1, 2), round(a_for * (h_ag / 1.2), 2)
         
-        matrix = build_bivariate_poisson_matrix(xg_home, xg_away)
-        
-        prob_1 = float(np.sum(np.tril(matrix, -1)))
-        prob_N = float(np.sum(np.diag(matrix)))
-        prob_2 = float(np.sum(np.triu(matrix, 1)))
-
-        prob_over25 = 0.0
-        prob_btts = 0.0
-        for h in range(7):
-            for a in range(7):
-                if h + a > 2.5:
-                    prob_over25 += matrix[h, a]
-                if h > 0 and a > 0:
-                    prob_btts += matrix[h, a]
-        prob_under25 = 1.0 - prob_over25
-
         with st.expander(f"⚽ {home_team} vs {away_team} ({bm_title})", expanded=False):
-            st.write(f"📊 **xG Modélisés :** `{xg_home}` ({home_team}) vs `{xg_away}` ({away_team})")
             
-            # Utilisation d'onglets pour structurer l'affichage analytique et garder de la clarté
-            tab_1n2, tab_goals, tab_matrix, tab_bet = st.tabs(["🔹 Marché 1N2", "⚽ Marchés de Buts", "📐 Détail Matrice (Scores)", "🎯 Valider un Pari"])
+            # --- BLOC AJOUTÉ : CONTEXTE TACTIQUE ET ABSENCES ---
+            st.markdown("#### ⚙️ Paramètres & Ajustements Contextuels")
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                fatigue_home = st.checkbox(f"Match important / Coupe à venir ({home_team})", key=f"fat_{home_team}")
+                absent_home = st.checkbox(f"Absence(s) cadre(s) ({home_team})", key=f"abs_{home_team}")
+            with col_c2:
+                fatigue_away = st.checkbox(f"Match important / Coupe à venir ({away_team})", key=f"fat_{away_team}")
+                absent_away = st.checkbox(f"Absence(s) cadre(s) ({away_team})", key=f"abs_{away_team}")
+            
+            # Application des multiplicateurs contextuels sur les xG
+            mod_home = 1.0
+            mod_away = 1.0
+            if fatigue_home: mod_home -= 0.10
+            if absent_home: mod_home -= 0.12
+            if fatigue_away: mod_away -= 0.10
+            if absent_away: mod_away -= 0.12
+
+            xg_home = round(h_for * (a_ag / 1.2) * 1.1 * mod_home, 2)
+            xg_away = round(a_for * (h_ag / 1.2) * mod_away, 2)
+            
+            st.write(f"📊 **xG Ajustés (Contexte inclus) :** `{xg_home}` ({home_team}) vs `{xg_away}` ({away_team})")
+            
+            matrix = build_bivariate_poisson_matrix(xg_home, xg_away)
+            
+            prob_1 = float(np.sum(np.tril(matrix, -1)))
+            prob_N = float(np.sum(np.diag(matrix)))
+            prob_2 = float(np.sum(np.triu(matrix, 1)))
+
+            prob_over25 = 0.0
+            prob_btts = 0.0
+            for h in range(7):
+                for a in range(7):
+                    if h + a > 2.5:
+                        prob_over25 += matrix[h, a]
+                    if h > 0 and a > 0:
+                        prob_btts += matrix[h, a]
+            prob_under25 = 1.0 - prob_over25
+
+            tab_1n2, tab_goals, tab_matrix, tab_bet = st.tabs(["🔹 Marché 1N2", "⚽ Marchés de Buts", "📐 Scores & Clôture (CLV)", "🎯 Valider un Pari"])
 
             with tab_1n2:
                 data_1n2 = [
@@ -238,40 +258,38 @@ else:
                 st.dataframe(df_disp_2[["Marché", "Probabilité", "Cote Équitable", "Cote Bookie", "Expected Value (EV)"]], use_container_width=True, hide_index=True)
 
             with tab_matrix:
-                st.markdown("#### 📉 Matrice de Probabilité des Scores Exacts (en %)")
-                st.caption(f"Lignes = Buts de {home_team} | Colonnes = Buts de {away_team}")
-                
-                # Création d'un DataFrame propre pour afficher la matrice de 0 à 5 buts
-                matrix_df = pd.DataFrame(
-                    [[round(matrix[h, a] * 100, 2) for a in range(6)] for h in range(6)],
-                    index=[f"{home_team} {h}b" for h in range(6)],
-                    columns=[f"{away_team} {a}b" for a in range(6)]
-                )
-                st.dataframe(matrix_df.style.format("{:.2f}%"), use_container_width=True)
-
-            with tab_matrix:
-                # Top 3 des scores les plus probables calculés par la matrice
+                st.markdown("#### 📉 Top 3 Scores Exacts & Matrice")
                 scores_list = []
                 for h in range(6):
                     for a in range(6):
                         scores_list.append({"Score": f"{h} - {a}", "Probabilité": matrix[h, a]})
                 df_scores = pd.DataFrame(scores_list).sort_values(by="Probabilité", ascending=False).head(3)
-                st.markdown("**Top 3 des scores exacts les plus probables :**")
+                
                 for _, sc_row in df_scores.iterrows():
                     st.text(f"• {sc_row['Score']} -> Probabilité : {round(sc_row['Probabilité']*100, 1)}% (Cote juste : {round(1/sc_row['Probabilité'], 2)})")
 
+                st.markdown("---")
+                matrix_df = pd.DataFrame(
+                    [[round(matrix[h, a] * 100, 2) for a in range(5)] for h in range(5)],
+                    index=[f"{home_team} {h}b" for h in range(5)],
+                    columns=[f"{away_team} {a}b" for a in range(5)]
+                )
+                st.dataframe(matrix_df.style.format("{:.2f}%"), use_container_width=True)
+
             with tab_bet:
-                st.markdown("**🎯 Saisie et Validation des Mises**")
+                st.markdown("**🎯 Saisie, Validation & Suivi de la Clôture (CLV)**")
                 df_total = pd.concat([df_1n2, df_goals], ignore_index=True)
                 for _, row in df_total.iterrows():
                     ev_pct = round(row["Expected Value (EV)"] * 100, 1)
-                    col_v1, col_v2, col_v3 = st.columns([2, 1, 1])
+                    col_v1, col_v2, col_v3, col_v4 = st.columns([2, 1, 1, 1])
                     with col_v1:
                         prefix = "🔥" if row["Expected Value (EV)"] > 0 else "📌"
-                        st.write(f"{prefix} **{row['Marché']}** @ **{row['Cote Bookie']}** (EV : {'+' if ev_pct>0 else ''}{ev_pct}%)")
+                        st.write(f"{prefix} **{row['Marché']}** @ **{row['Cote Bookie']}**")
                     with col_v2:
-                        user_stake = st.number_input(f"Mise (€) {row['Marché']}", min_value=1.0, value=10.0, step=5.0, key=f"input_{home_team}_{row['Marché']}")
+                        user_stake = st.number_input(f"Mise (€)", min_value=1.0, value=10.0, step=5.0, key=f"input_{home_team}_{row['Marché']}")
                     with col_v3:
+                        closing_cote = st.number_input("Cote Clôture (CLV)", min_value=1.01, value=float(row['Cote Bookie']), step=0.05, key=f"clv_{home_team}_{row['Marché']}")
+                    with col_v4:
                         st.markdown("<br>", unsafe_allow_html=True)
                         bet_id = f"{home_team}-{away_team}-{row['Marché']}"
                         if st.button("Valider", key=bet_id):
@@ -279,7 +297,8 @@ else:
                                 "Mois": selected_month, 
                                 "Match": f"{home_team} vs {away_team}", 
                                 "Pari": row['Marché'], 
-                                "Cote": row['Cote Bookie'], 
+                                "Cote Prise": row['Cote Bookie'],
+                                "Cote Clôture": closing_cote,
                                 "Mise": user_stake
                             })
                             st.rerun()
