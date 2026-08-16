@@ -9,7 +9,7 @@ st.set_page_config(
     page_title="QuantBet Pro - Master Engine xG", page_icon="⚽", layout="wide"
 )
 
-st.title("⚽ QuantBet Pro - Moteur Avancé (1N2 & Marchés de Buts)")
+st.title("⚽ QuantBet Pro - Moteur Avancé (Détails des Probabilités)")
 st.markdown("---")
 
 # ==========================================
@@ -97,7 +97,6 @@ def build_bivariate_poisson_matrix(xg_home, xg_away, max_goals=7):
 
 @st.cache_data(ttl=3600)
 def fetch_rapidapi_stats(team_name, api_key):
-    # Simulation/Récupération xG dynamiques pondérés par la forme
     return 1.45, 1.15
 
 @st.cache_data(ttl=1800)
@@ -175,7 +174,6 @@ else:
         cote_2 = next((i["price"] for i in h2h["outcomes"] if i["name"] == away_team), 1.0)
         cote_N = next((i["price"] for i in h2h["outcomes"] if i["name"] == "Draw"), 1.0)
 
-        # Récupération cotes Over/Under 2.5 si dispo dans l'API
         cote_over25, cote_under25 = 1.85, 1.85
         if totals:
             for out in totals["outcomes"]:
@@ -189,12 +187,10 @@ else:
         
         matrix = build_bivariate_poisson_matrix(xg_home, xg_away)
         
-        # Probabilités 1N2
         prob_1 = float(np.sum(np.tril(matrix, -1)))
         prob_N = float(np.sum(np.diag(matrix)))
         prob_2 = float(np.sum(np.triu(matrix, 1)))
 
-        # Probabilités Over / Under 2.5 & BTTS à partir de la matrice
         prob_over25 = 0.0
         prob_btts = 0.0
         for h in range(7):
@@ -206,65 +202,87 @@ else:
         prob_under25 = 1.0 - prob_over25
 
         with st.expander(f"⚽ {home_team} vs {away_team} ({bm_title})", expanded=False):
-            st.write(f"📊 **xG Modélisés (Forme & Avantage Terrain) :** `{xg_home}` vs `{xg_away}`")
+            st.write(f"📊 **xG Modélisés :** `{xg_home}` ({home_team}) vs `{xg_away}` ({away_team})")
             
-            # Tableau 1: Marché 1N2
-            st.markdown("### 🔹 Marché 1N2")
-            data_1n2 = [
-                {"Marché": f"Victoire {home_team} (1)", "Probabilité": prob_1, "Cote Bookie": cote_1},
-                {"Marché": "Match Nul (N)", "Probabilité": prob_N, "Cote Bookie": cote_N},
-                {"Marché": f"Victoire {away_team} (2)", "Probabilité": prob_2, "Cote Bookie": cote_2},
-            ]
-            df_1n2 = pd.DataFrame(data_1n2)
-            df_1n2["Cote Équitable"] = df_1n2["Probabilité"].apply(lambda x: round(1 / x, 2) if x > 0 else 99)
-            df_1n2["Expected Value (EV)"] = (df_1n2["Probabilité"] * df_1n2["Cote Bookie"]) - 1.0
+            # Utilisation d'onglets pour structurer l'affichage analytique et garder de la clarté
+            tab_1n2, tab_goals, tab_matrix, tab_bet = st.tabs(["🔹 Marché 1N2", "⚽ Marchés de Buts", "📐 Détail Matrice (Scores)", "🎯 Valider un Pari"])
 
-            df_disp_1 = df_1n2.copy()
-            df_disp_1["Probabilité"] = df_disp_1["Probabilité"].apply(lambda x: f"{round(x*100, 1)}%")
-            df_disp_1["Expected Value (EV)"] = df_disp_1["Expected Value (EV)"].apply(lambda x: f"{'+' if x>0 else ''}{round(x*100, 1)}%")
-            st.dataframe(df_disp_1[["Marché", "Probabilité", "Cote Équitable", "Cote Bookie", "Expected Value (EV)"]], use_container_width=True, hide_index=True)
+            with tab_1n2:
+                data_1n2 = [
+                    {"Marché": f"Victoire {home_team} (1)", "Probabilité": prob_1, "Cote Bookie": cote_1},
+                    {"Marché": "Match Nul (N)", "Probabilité": prob_N, "Cote Bookie": cote_N},
+                    {"Marché": f"Victoire {away_team} (2)", "Probabilité": prob_2, "Cote Bookie": cote_2},
+                ]
+                df_1n2 = pd.DataFrame(data_1n2)
+                df_1n2["Cote Équitable"] = df_1n2["Probabilité"].apply(lambda x: round(1 / x, 2) if x > 0 else 99)
+                df_1n2["Expected Value (EV)"] = (df_1n2["Probabilité"] * df_1n2["Cote Bookie"]) - 1.0
 
-            # Tableau 2: Marchés de Buts (Over/Under & BTTS)
-            st.markdown("### ⚽ Marchés de Buts (Over/Under & BTTS)")
-            data_goals = [
-                {"Marché": "Over 2.5 Buts", "Probabilité": prob_over25, "Cote Bookie": cote_over25},
-                {"Marché": "Under 2.5 Buts", "Probabilité": prob_under25, "Cote Bookie": cote_under25},
-                {"Marché": "Les deux équipes marquent (BTTS)", "Probabilité": prob_btts, "Cote Bookie": 1.80}, # Cote standard ou récupérée
-            ]
-            df_goals = pd.DataFrame(data_goals)
-            df_goals["Cote Équitable"] = df_goals["Probabilité"].apply(lambda x: round(1 / x, 2) if x > 0 else 99)
-            df_goals["Expected Value (EV)"] = (df_goals["Probabilité"] * df_goals["Cote Bookie"]) - 1.0
+                df_disp_1 = df_1n2.copy()
+                df_disp_1["Probabilité"] = df_disp_1["Probabilité"].apply(lambda x: f"{round(x*100, 1)}%")
+                df_disp_1["Expected Value (EV)"] = df_disp_1["Expected Value (EV)"].apply(lambda x: f"{'+' if x>0 else ''}{round(x*100, 1)}%")
+                st.dataframe(df_disp_1[["Marché", "Probabilité", "Cote Équitable", "Cote Bookie", "Expected Value (EV)"]], use_container_width=True, hide_index=True)
 
-            df_disp_2 = df_goals.copy()
-            df_disp_2["Probabilité"] = df_disp_2["Probabilité"].apply(lambda x: f"{round(x*100, 1)}%")
-            df_disp_2["Expected Value (EV)"] = df_disp_2["Expected Value (EV)"].apply(lambda x: f"{'+' if x>0 else ''}{round(x*100, 1)}%")
-            st.dataframe(df_disp_2[["Marché", "Probabilité", "Cote Équitable", "Cote Bookie", "Expected Value (EV)"]], use_container_width=True, hide_index=True)
+            with tab_goals:
+                data_goals = [
+                    {"Marché": "Over 2.5 Buts", "Probabilité": prob_over25, "Cote Bookie": cote_over25},
+                    {"Marché": "Under 2.5 Buts", "Probabilité": prob_under25, "Cote Bookie": cote_under25},
+                    {"Marché": "Les deux équipes marquent (BTTS)", "Probabilité": prob_btts, "Cote Bookie": 1.80},
+                ]
+                df_goals = pd.DataFrame(data_goals)
+                df_goals["Cote Équitable"] = df_goals["Probabilité"].apply(lambda x: round(1 / x, 2) if x > 0 else 99)
+                df_goals["Expected Value (EV)"] = (df_goals["Probabilité"] * df_goals["Cote Bookie"]) - 1.0
 
-            st.markdown("---")
-            st.markdown("**🎯 Validation & Saisie des Mises (Tous Marchés)**")
-            
-            # Fusion des tableaux pour validation globale
-            df_total = pd.concat([df_1n2, df_goals], ignore_index=True)
-            for _, row in df_total.iterrows():
-                ev_pct = round(row["Expected Value (EV)"] * 100, 1)
-                col_v1, col_v2, col_v3 = st.columns([2, 1, 1])
-                with col_v1:
-                    prefix = "🔥" if row["Expected Value (EV)"] > 0 else "📌"
-                    st.write(f"{prefix} **{row['Marché']}** @ **{row['Cote Bookie']}** (EV : {'+' if ev_pct>0 else ''}{ev_pct}%)")
-                with col_v2:
-                    user_stake = st.number_input(f"Mise (€)", min_value=1.0, value=10.0, step=5.0, key=f"input_{home_team}_{row['Marché']}")
-                with col_v3:
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    bet_id = f"{home_team}-{away_team}-{row['Marché']}"
-                    if st.button("Valider", key=bet_id):
-                        st.session_state.historique_paris.append({
-                            "Mois": selected_month, 
-                            "Match": f"{home_team} vs {away_team}", 
-                            "Pari": row['Marché'], 
-                            "Cote": row['Cote Bookie'], 
-                            "Mise": user_stake
-                        })
-                        st.rerun()
+                df_disp_2 = df_goals.copy()
+                df_disp_2["Probabilité"] = df_disp_2["Probabilité"].apply(lambda x: f"{round(x*100, 1)}%")
+                df_disp_2["Expected Value (EV)"] = df_disp_2["Expected Value (EV)"].apply(lambda x: f"{'+' if x>0 else ''}{round(x*100, 1)}%")
+                st.dataframe(df_disp_2[["Marché", "Probabilité", "Cote Équitable", "Cote Bookie", "Expected Value (EV)"]], use_container_width=True, hide_index=True)
+
+            with tab_matrix:
+                st.markdown("#### 📉 Matrice de Probabilité des Scores Exacts (en %)")
+                st.caption(f"Lignes = Buts de {home_team} | Colonnes = Buts de {away_team}")
+                
+                # Création d'un DataFrame propre pour afficher la matrice de 0 à 5 buts
+                matrix_df = pd.DataFrame(
+                    [[round(matrix[h, a] * 100, 2) for a in range(6)] for h in range(6)],
+                    index=[f"{home_team} {h}b" for h in range(6)],
+                    columns=[f"{away_team} {a}b" for a in range(6)]
+                )
+                st.dataframe(matrix_df.style.format("{:.2f}%"), use_container_width=True)
+
+            with tab_matrix:
+                # Top 3 des scores les plus probables calculés par la matrice
+                scores_list = []
+                for h in range(6):
+                    for a in range(6):
+                        scores_list.append({"Score": f"{h} - {a}", "Probabilité": matrix[h, a]})
+                df_scores = pd.DataFrame(scores_list).sort_values(by="Probabilité", ascending=False).head(3)
+                st.markdown("**Top 3 des scores exacts les plus probables :**")
+                for _, sc_row in df_scores.iterrows():
+                    st.text(f"• {sc_row['Score']} -> Probabilité : {round(sc_row['Probabilité']*100, 1)}% (Cote juste : {round(1/sc_row['Probabilité'], 2)})")
+
+            with tab_bet:
+                st.markdown("**🎯 Saisie et Validation des Mises**")
+                df_total = pd.concat([df_1n2, df_goals], ignore_index=True)
+                for _, row in df_total.iterrows():
+                    ev_pct = round(row["Expected Value (EV)"] * 100, 1)
+                    col_v1, col_v2, col_v3 = st.columns([2, 1, 1])
+                    with col_v1:
+                        prefix = "🔥" if row["Expected Value (EV)"] > 0 else "📌"
+                        st.write(f"{prefix} **{row['Marché']}** @ **{row['Cote Bookie']}** (EV : {'+' if ev_pct>0 else ''}{ev_pct}%)")
+                    with col_v2:
+                        user_stake = st.number_input(f"Mise (€) {row['Marché']}", min_value=1.0, value=10.0, step=5.0, key=f"input_{home_team}_{row['Marché']}")
+                    with col_v3:
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        bet_id = f"{home_team}-{away_team}-{row['Marché']}"
+                        if st.button("Valider", key=bet_id):
+                            st.session_state.historique_paris.append({
+                                "Mois": selected_month, 
+                                "Match": f"{home_team} vs {away_team}", 
+                                "Pari": row['Marché'], 
+                                "Cote": row['Cote Bookie'], 
+                                "Mise": user_stake
+                            })
+                            st.rerun()
 
 # ==========================================
 # HISTORIQUE DES PARIS DU MOIS
