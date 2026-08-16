@@ -4,8 +4,8 @@ import numpy as np
 import requests
 
 st.set_page_config(page_title="🎯 QuantBet Auto - Foot & Tennis", layout="wide")
-st.title("🎯 QuantBet Studio - Dashboard Automatique 2026/2027")
-st.caption("Données API, Effectifs 26/27, Joueurs Décisifs & Modèles Avancés")
+st.title("🎯 QuantBet Studio - Dashboard Automatique")
+st.caption("Données API, Loi de Poisson, Surface & Vitesse de Court")
 st.markdown("---")
 
 st.sidebar.header("⚙️ Configuration API")
@@ -113,34 +113,6 @@ if not all_matches and sport_choice == "Football" and "Trophée des Champions" i
         }]
     }]
 
-# --- EFFECTIFS ET JOUEURS DÉCISIFS (SAISON 26/27) ---
-EFFECTIFS_FOOT = {
-    "Paris SG": {
-        "cadres": ["M. Safonov", "L. Chevalier", "Marquinhos", "W. Pacho", "A. Hakimi", "Nuno Mendes", "Vitinha", "J. Neves", "W. Zaïre-Emery", "D. Doué", "O. Dembélé", "B. Barcola", "R. Kolo Muani"],
-        "decisif": ("Bradley Barcola", 1.85, "Buteur ou Passeur")
-    },
-    "Lens": {
-        "cadres": ["B. Samba", "J. Gradit", "A. Khusanov", "F. Medina", "P. Frankowski", "D. Machado", "A. Diouf", "A. Thomasson", "F. Sotoca", "M. Satriano", "R. Labeau-Lascary"],
-        "decisif": ("Florian Sotoca", 2.40, "Buteur ou Passeur")
-    },
-    "Real Madrid": {
-        "cadres": ["T. Courtois", "D. Carvajal", "E. Militao", "A. Rüdiger", "F. Mendy", "F. Valverde", "A. Tchouaméni", "J. Bellingham", "Arda Güler", "Vinicius Jr", "K. Mbappé", "Endrick"],
-        "decisif": ("Kylian Mbappé", 1.45, "Buteur ou Passeur")
-    },
-    "Barcelona": {
-        "cadres": ["M. ter Stegen", "J. Koundé", "P. Cubarsí", "R. Araujo", "A. Balde", "Pedri", "Gavi", "F. López", "Lamine Yamal", "R. Lewandowski", "Raphinha", "Dani Olmo"],
-        "decisif": ("Lamine Yamal", 1.65, "Buteur ou Passeur")
-    },
-    "Manchester City": {
-        "cadres": ["G. Donnarumma", "K. Walker", "R. Dias", "M. Akanji", "J. Gvardiol", "Rodri", "K. De Bruyne", "B. Silva", "P. Foden", "E. Haaland", "J. Doku", "Sinho"],
-        "decisif": ("Erling Haaland", 1.35, "Buteur ou Passeur")
-    },
-    "Arsenal": {
-        "cadres": ["D. Raya", "B. White", "W. Saliba", "Gabriel", "R. Calafiori", "D. Rice", "M. Odegaard", "M. Merino", "B. Saka", "G. Martinelli", "K. Havertz", "L. Trossard"],
-        "decisif": ("Bukayo Saka", 1.70, "Buteur ou Passeur")
-    }
-}
-
 TENNIS_PROFILES = {
     "Tsitsipas": {"main": "Droitier", "style": "Attaquant / Service-Volée", "aces_avg": 9},
     "Auger-Aliassime": {"main": "Droitier", "style": "Puissant / Serveur", "aces_avg": 11},
@@ -155,15 +127,6 @@ TENNIS_PROFILES = {
     "Alcaraz": {"main": "Droitier", "style": "Complet / Variation", "aces_avg": 5},
     "Djokovic": {"main": "Droitier", "style": "Relanceur / Contreur", "aces_avg": 7}
 }
-
-def get_football_data(team_name):
-    if team_name in EFFECTIFS_FOOT:
-        return EFFECTIFS_FOOT[team_name]
-    # Générateur automatique pour équipes hors base principale
-    return {
-        "cadres": [f"Gardiens ({team_name})", "Défenseurs clés", "Milieux moteurs", "Attaquants vedettes"],
-        "decisif": (f"Attaquant Vedette ({team_name})", 2.10, "Buteur ou Passeur")
-    }
 
 def get_tennis_profile(player_name):
     for key, data in TENNIS_PROFILES.items():
@@ -191,16 +154,6 @@ def analyser_rencontre(equipe_home, equipe_away, sport, cote_home, cote_away, su
         stats["over_1_5_prob"] = round(1.0 - (prob_0_buts + prob_1_but), 2)
         stats["over_2_5_prob"] = round(stats["over_1_5_prob"] - 0.22, 2)
         stats["btts_prob"] = round(0.52 + (0.08 if abs(cote_home - cote_away) < 0.8 else -0.06), 2)
-        
-        # Récupération effectifs + Joueurs Décisifs
-        data_h = get_football_data(equipe_home)
-        data_a = get_football_data(equipe_away)
-        
-        stats["eff_home"] = ", ".join(data_h["cadres"])
-        stats["eff_away"] = ", ".join(data_a["cadres"])
-        
-        stats["decisif_home"] = f"{data_h['decisif'][0]} ({data_h['decisif'][2]}) @ {data_h['decisif'][1]}"
-        stats["decisif_away"] = f"{data_a['decisif'][0]} ({data_a['decisif'][2]}) @ {data_a['decisif'][1]}"
         
         summary = f"💡 **Analyse Poisson/xG :** Espérance de buts estimée à {round(lambda_buts, 2)} buts."
         stats["summary"] = summary
@@ -288,11 +241,10 @@ else:
                 st.write(f"Prob. {away} : **{int(prob_algo_away*100)}%**")
                 
                 if is_foot:
-                    st.markdown("**⚽ Joueurs Décisifs & Métriques**")
-                    st.write(f"🎯 **{home}** : {stats['decisif_home']}")
-                    st.write(f"🎯 **{away}** : {stats['decisif_away']}")
+                    st.markdown("**⚽ Métriques Marchés**")
                     st.write(f"• BTTS (Oui) : **{int(stats['btts_prob']*100)}%**")
                     st.write(f"• Over 1.5 buts : **{int(stats['over_1_5_prob']*100)}%**")
+                    st.write(f"• Over 2.5 buts : **{int(stats['over_2_5_prob']*100)}%**")
                 else:
                     st.markdown("**🎾 Profils & Paliers Aces**")
                     st.caption(f"👤 **{home}** : {stats['prof_home']}")
@@ -304,15 +256,14 @@ else:
             with c3:
                 st.markdown("**🎯 Value Bets Détectées**")
                 if is_foot:
+                    has_val_foot = False
                     if stats['over_1_5_prob'] > 0.78:
                         st.success("VALUE : Over 1.5 Buts")
+                        has_val_foot = True
                     if stats['btts_prob'] > 0.58:
                         st.success("VALUE : Les 2 équipes marquent")
-                    if prob_algo_home > 0.55:
-                        st.success(f"VALUE : {stats['decisif_home']}")
-                    elif prob_algo_away > 0.55:
-                        st.success(f"VALUE : {stats['decisif_away']}")
-                    else:
+                        has_val_foot = True
+                    if not has_val_foot:
                         st.info("Aucune Value majeure détectée.")
                 else:
                     has_value = False
@@ -327,12 +278,3 @@ else:
                         has_value = True
                     if not has_value:
                         st.info("Aucune Value majeure détectée.")
-
-            if is_foot:
-                st.markdown("---")
-                st.markdown("**👥 Effectifs déclarés (Saison 2026/2027)**")
-                col_h, col_a = st.columns(2)
-                with col_h:
-                    st.caption(f"**{home}** : {stats['eff_home']}")
-                with col_a:
-                    st.caption(f"**{away}** : {stats['eff_away']}")
