@@ -64,8 +64,6 @@ if sport_choice == "⚽ Football (QuantBet Pro)":
         st.warning("Veuillez renseigner vos clés API.")
         st.stop()
 
-    def poisson_pmf(k, lamb): return (lamb**k * math.exp(-lamb)) / math.factorial(k)
-    
     @st.cache_data(ttl=1800)
     def fetch_odds_data(s_key, api_k):
         url = f"https://api.the-odds-api.com/v4/sports/{s_key}/odds/?apiKey={api_k}&regions=eu&markets=h2h,totals&oddsFormat=decimal"
@@ -77,7 +75,8 @@ if sport_choice == "⚽ Football (QuantBet Pro)":
     if not matches: st.info("Aucun match trouvé.")
     else:
         for match in matches:
-            st.write(f"⚽ {match['home_team']} vs {match['away_team']}")
+            if isinstance(match, dict) and "home_team" in match and "away_team" in match:
+                st.write(f"⚽ {match['home_team']} vs {match['away_team']}")
 
 # ==========================================
 # MODULE 2 : TENNIS (AUTOMATIQUE)
@@ -103,27 +102,42 @@ elif sport_choice == "🎾 Tennis (Automatique & Aces)":
     @st.cache_data(ttl=1800)
     def fetch_tennis_data(s_key, api_k):
         url = f"https://api.the-odds-api.com/v4/sports/{s_key}/odds/?apiKey={api_k}&regions=eu&markets=h2h,player_aces&oddsFormat=decimal"
-        try: return requests.get(url).json()
+        try: 
+            res = requests.get(url)
+            return res.json() if res.status_code == 200 else []
         except: return []
 
     matches_tennis = fetch_tennis_data(tennis_key, ODDS_API_KEY)
 
-    if not matches_tennis:
+    if not matches_tennis or not isinstance(matches_tennis, list):
         st.info(f"⏳ Aucun match trouvé pour {nom_tournoi} actuellement.")
     else:
         st.success(f"⚡ {len(matches_tennis)} rencontres chargées pour {nom_tournoi} !")
         
         for match in matches_tennis:
-            p1, p2 = match["home_team"], match["away_team"]
-            bookmakers = match.get("bookmakers", [{}])
-            h2h = next((m for m in bookmakers[0].get("markets", []) if m["key"] == "h2h"), None)
+            # Sécurité anti-erreur si l'objet n'est pas un dictionnaire standard
+            if not isinstance(match, dict):
+                continue
+                
+            p1 = match.get("home_team")
+            p2 = match.get("away_team")
             
-            if not h2h: continue
-            
-            cote_p1 = next((i["price"] for i in h2h["outcomes"] if i["name"] == p1), 1.80)
-            cote_p2 = next((i["price"] for i in h2h["outcomes"] if i["name"] == p2), 1.80)
+            if not p1 or not p2:
+                continue
 
-            seed = sum(ord(c) for c in p1)
+            bookmakers = match.get("bookmakers", [])
+            if not bookmakers:
+                continue
+                
+            h2h = next((m for m in bookmakers[0].get("markets", []) if m["key"] == "h2h"), None)
+            if not h2h: 
+                continue
+            
+            outcomes = h2h.get("outcomes", [])
+            cote_p1 = next((i["price"] for i in outcomes if i.get("name") == p1), 1.80)
+            cote_p2 = next((i["price"] for i in outcomes if i.get("name") == p2), 1.80)
+
+            seed = sum(ord(c) for c in str(p1))
             np.random.seed(seed)
             form_p1 = round(float(np.random.uniform(2.0, 4.8)), 1)
             form_p2 = round(float(np.random.uniform(2.0, 4.8)), 1)
