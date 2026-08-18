@@ -2,67 +2,69 @@ import streamlit as st
 import numpy as np
 from scipy.stats import poisson
 
-st.set_page_config(page_title="ATP Aces Pro Analytics - Top 100", layout="wide")
-st.title("🎾 ATP Aces Pro Analytics - Top 100 Complet")
+st.set_page_config(page_title="ATP Aces Pro Analytics - Top 100 Actuel", layout="wide")
+st.title("🎾 ATP Aces Pro Analytics - Top 100 Actuel")
 
-# --- BASE DE DONNÉES DU TOP 100 ATP (Stats moyennes par match complet / Format standard 2 sets) ---
+# --- BASE DE DONNÉES DU TOP 100 ATP ACTUEL ---
 # Format: "Surface": (Moyenne Aces, Vulnérabilité au retour (0.0-0.5), Taux Tie-Break habituel)
 ATP_DB = {
     "Jannik Sinner": {"Hard": (9.5, 0.25, 0.15), "Clay": (6.0, 0.22, 0.10), "Grass": (11.0, 0.24, 0.18)},
     "Carlos Alcaraz": {"Hard": (6.5, 0.20, 0.12), "Clay": (5.0, 0.18, 0.08), "Grass": (8.0, 0.19, 0.15)},
     "Alexander Zverev": {"Hard": (10.5, 0.24, 0.20), "Clay": (7.0, 0.22, 0.12), "Grass": (11.5, 0.23, 0.18)},
-    "Daniil Medvedev": {"Hard": (10.0, 0.33, 0.10), "Clay": (5.0, 0.30, 0.05), "Grass": (9.5, 0.32, 0.08)},
-    "Taylor Fritz": {"Hard": (13.5, 0.27, 0.25), "Clay": (7.5, 0.25, 0.15), "Grass": (14.5, 0.26, 0.28)},
+    "Felix Auger-Aliassime": {"Hard": (12.0, 0.27, 0.22), "Clay": (7.0, 0.25, 0.14), "Grass": (13.5, 0.26, 0.25)},
     "Novak Djokovic": {"Hard": (7.0, 0.35, 0.12), "Clay": (4.5, 0.32, 0.08), "Grass": (8.5, 0.34, 0.14)},
+    "Ben Shelton": {"Hard": (13.0, 0.27, 0.24), "Clay": (7.5, 0.25, 0.15), "Grass": (14.0, 0.26, 0.27)},
+    "Daniil Medvedev": {"Hard": (10.0, 0.33, 0.10), "Clay": (5.0, 0.30, 0.05), "Grass": (9.5, 0.32, 0.08)},
+    "Alex de Minaur": {"Hard": (5.5, 0.34, 0.08), "Clay": (3.0, 0.32, 0.05), "Grass": (6.5, 0.33, 0.10)},
+    "Taylor Fritz": {"Hard": (13.5, 0.27, 0.25), "Clay": (7.5, 0.25, 0.15), "Grass": (14.5, 0.26, 0.28)},
+    "Flavio Cobolli": {"Hard": (5.0, 0.30, 0.08), "Clay": (3.5, 0.32, 0.05), "Grass": (5.5, 0.29, 0.07)},
+    "Rafael Jodar": {"Hard": (7.0, 0.28, 0.10), "Clay": (4.0, 0.26, 0.06), "Grass": (8.0, 0.27, 0.12)},
+    "Learner Tien": {"Hard": (6.0, 0.31, 0.09), "Clay": (3.5, 0.29, 0.05), "Grass": (7.0, 0.30, 0.11)},
+    "Alexander Bublik": {"Hard": (13.0, 0.29, 0.26), "Clay": (7.0, 0.26, 0.16), "Grass": (14.0, 0.28, 0.30)},
+    "Jiri Lehecka": {"Hard": (9.0, 0.28, 0.15), "Clay": (5.5, 0.26, 0.10), "Grass": (10.0, 0.27, 0.17)},
+    "Lorenzo Musetti": {"Hard": (5.5, 0.31, 0.09), "Clay": (4.0, 0.32, 0.07), "Grass": (7.0, 0.29, 0.12)},
+    "Jakub Mensik": {"Hard": (11.5, 0.26, 0.20), "Clay": (6.0, 0.24, 0.11), "Grass": (12.5, 0.25, 0.22)},
     "Casper Ruud": {"Hard": (6.0, 0.28, 0.10), "Clay": (4.5, 0.30, 0.07), "Grass": (7.0, 0.26, 0.09)},
     "Andrey Rublev": {"Hard": (9.0, 0.30, 0.14), "Clay": (5.5, 0.28, 0.09), "Grass": (10.0, 0.29, 0.15)},
-    "Alex de Minaur": {"Hard": (5.5, 0.34, 0.08), "Clay": (3.0, 0.32, 0.05), "Grass": (6.5, 0.33, 0.10)},
+    "Valentin Vacherot": {"Hard": (8.0, 0.29, 0.13), "Clay": (4.5, 0.27, 0.08), "Grass": (9.0, 0.28, 0.14)},
+    "Luciano Darderi": {"Hard": (5.0, 0.31, 0.08), "Clay": (3.5, 0.33, 0.06), "Grass": (6.0, 0.30, 0.10)},
     "Hubert Hurkacz": {"Hard": (14.5, 0.20, 0.30), "Clay": (8.5, 0.19, 0.20), "Grass": (16.5, 0.21, 0.35)},
-    "Stefanos Tsitsipas": {"Hard": (9.0, 0.29, 0.15), "Clay": (6.0, 0.27, 0.11), "Grass": (10.0, 0.28, 0.16)},
-    "Grigor Dimitrov": {"Hard": (9.5, 0.29, 0.16), "Clay": (5.5, 0.27, 0.10), "Grass": (10.5, 0.28, 0.18)},
-    "Tommy Paul": {"Hard": (7.5, 0.31, 0.12), "Clay": (4.0, 0.29, 0.08), "Grass": (8.5, 0.30, 0.14)},
-    "Ben Shelton": {"Hard": (13.0, 0.27, 0.24), "Clay": (7.5, 0.25, 0.15), "Grass": (14.0, 0.26, 0.27)},
-    "Ugo Humbert": {"Hard": {"Hard": (11.0, 0.28, 0.18)}, "Clay": (6.5, 0.26, 0.11), "Grass": (12.5, 0.27, 0.21)},
-    "Holger Rune": {"Hard": {"Hard": (8.5, 0.30, 0.13)}, "Clay": (5.0, 0.28, 0.09), "Grass": (9.5, 0.29, 0.15)},
-    "Frances Tiafoe": {"Hard": (9.0, 0.30, 0.15), "Clay": (5.0, 0.28, 0.10), "Grass": (10.5, 0.29, 0.17)},
-    "Lorenzo Musetti": {"Hard": (5.5, 0.31, 0.09), "Clay": (4.0, 0.32, 0.07), "Grass": (7.0, 0.29, 0.12)},
-    "Jack Draper": {"Hard": (12.0, 0.28, 0.22), "Clay": (6.5, 0.26, 0.13), "Grass": (13.5, 0.27, 0.25)},
-    "Felix Auger-Aliassime": {"Hard": (12.0, 0.27, 0.22), "Clay": (7.0, 0.25, 0.14), "Grass": (13.5, 0.26, 0.25)},
-    "Alexander Bublik": {"Hard": (13.0, 0.29, 0.26), "Clay": (7.0, 0.26, 0.16), "Grass": (14.0, 0.28, 0.30)},
     "Giovanni Mpetshi Perricard": {"Hard": (18.0, 0.15, 0.35), "Clay": (10.0, 0.14, 0.25), "Grass": (20.0, 0.16, 0.40)},
     "Matteo Berrettini": {"Hard": (14.0, 0.26, 0.28), "Clay": (8.0, 0.24, 0.18), "Grass": (16.0, 0.25, 0.32)},
-    "Karen Khachanov": {"Hard": (10.0, 0.29, 0.17), "Clay": (6.0, 0.27, 0.11), "Grass": (11.0, 0.28, 0.19)},
-    "Flavio Cobolli": {"Hard": (5.0, 0.30, 0.08), "Clay": (3.5, 0.32, 0.05), "Grass": (5.5, 0.29, 0.07)},
-    "Alexander Blockx": {"Hard": (7.5, 0.31, 0.11), "Clay": (3.5, 0.26, 0.06), "Grass": (8.5, 0.29, 0.13)}
+    "Holger Rune": {"Hard": (8.5, 0.30, 0.13), "Clay": (5.0, 0.28, 0.09), "Grass": (9.5, 0.29, 0.15)}
 }
 
-# Liste globale exhaustive du Top 100 ATP pour alimenter les menus déroulants
-TOP_100_LIST = sorted(list(set(list(ATP_DB.keys()) + [
-    "Jiri Lehecka", "Sebastian Korda", "Alejandro Tabilo", "Arthur Fils", "Jordan Thompson",
-    "Tallon Griekspoor", "Tomas Machac", "Alexei Popyrin", "Nuno Borges", "Matteo Arnaldi",
-    "Jan-Lennard Struff", "Francisco Cerundolo", "Roman Safiullin", "Mariano Navone", "Luciano Darderi",
-    "Brandon Nakashima", "Jakub Mensik", "Marcos Giron", "Zizou Bergs", "Arthur Rinderknech",
-    "Pavel Kotov", "Roberto Bautista Agut", "Miomir Kecmanovic", "Fabian Marozsan", "Cameron Norrie",
-    "Sebastian Baez", "Arthur Cazaux", "David Goffin", "Stan Wawrinka", "Marin Cilic",
-    "Gaël Monfils", "Borna Coric", "Dominik Koepfer", "Daniel Altmaier", "Yoshihito Nishioka",
-    "Dusan Lajovic", "Laslo Djere", "Yannick Hanfmann", "Aleksandar Vukic", "Max Purcell",
-    "Rinky Hijikata", "Emil Ruusuvuori", "Botic Van de Zandschulp", "Corentin Moutet", "Adrian Mannarino",
-    "Quentin Halys", "Taro Daniel", "Christopher O'Connell", "Jaume Munar", "Federico Coria",
-    "Hugo Gaston", "Lukas Klein", "Damir Dzumhur", "Joao Fonseca", "Alejandro Davidovich Fokina",
-    "Tomas Martin Etcheverry", "Alex Michelsen", "Terence Atmane", "Luca Van Assche", "Hamad Medjedovic"
+# Liste exhaustive actualisée du Top 100 ATP pour alimenter les listes déroulantes
+TOP_100_ACTUEL = sorted(list(set(list(ATP_DB.keys()) + [
+    "Arthur Fils", "Brandon Nakashima", "Frances Tiafoe", "Tommy Paul", "Francisco Cerundolo", 
+    "Joao Fonseca", "Alejandro Davidovich Fokina", "Arthur Rinderknech", "Alejandro Tabilo", 
+    "Ugo Humbert", "Tomas Martin Etcheverry", "Alexander Blockx", "Zizou Bergs", "Matteo Arnaldi", 
+    "Cameron Norrie", "Ignacio Buse", "Arthur Fery", "Raphael Collignon", "Karen Khachanov", 
+    "Daniel Merida", "Alex Michelsen", "Jan-Lennard Struff", "Mariano Navone", "Terence Atmane", 
+    "Jaume Munar", "Nuno Borges", "Denis Shapovalov", "Stefanos Tsitsipas", "Thiago Agustin Tirante", 
+    "Juan Manuel Cerundolo", "Adrian Mannarino", "Sebastian Baez", "Luca Van Assche", 
+    "Yannick Hanfmann", "Tallon Griekspoor", "Quentin Halys", "Ethan Quinn", "Botic Van de Zandschulp", 
+    "Corentin Moutet", "Roman Andres Burruchaga", "Tomas Machac", "Fabian Marozsan", "Sebastian Korda", 
+    "Daniel Altmaier", "Miomir Kecmanovic", "Martin Landaluce", "Kamil Majchrzak", "Adolfo Daniel Vallejo", 
+    "Vit Kopriva", "Pablo Carreno Busta", "Hamad Medjedovic", "Jenson Brooksby", "Alex Molcan", 
+    "Camilo Ugo Carabelli", "Jan Choinski", "Valentin Royer", "Jaime Faria", "Marin Cilic", 
+    "Mattia Bellucci", "Marton Fucsovics", "Marcos Giron", "Zachary Svajda", "Arthur Gea", 
+    "James Duckworth", "Facundo Diaz Acosta", "Lorenzo Sonego", "Aleksandr Shevchenko", "Sho Shimabukuro", 
+    "Marco Trungelliti", "Coleman Wong", "Martin Damm Jr", "Rinky Hijikata", "Aleksandar Kovacevic", 
+    "Hugo Gaston", "Adam Walton", "Aleksandar Vukic", "Benjamin Bonzi"
 ])))
 
 def get_player_stats(name, surface):
     """Récupère les stats du joueur ou applique une valeur standard si non répertorié explicitement"""
     if name in ATP_DB and surface in ATP_DB[name]:
         return ATP_DB[name][surface]
-    # Fallback intelligent pour le reste du Top 100
+    # Fallback intelligent pour les autres joueurs du Top 100
     return (7.0, 0.28, 0.12)
 
 # --- SIDEBAR (Configuration) ---
 st.sidebar.header("Configuration Match")
-p1 = st.sidebar.selectbox("Joueur 1 (Serveur A)", TOP_100_LIST, index=TOP_100_LIST.index("Jannik Sinner") if "Jannik Sinner" in TOP_100_LIST else 0)
-p2 = st.sidebar.selectbox("Joueur 2 (Serveur B)", TOP_100_LIST, index=TOP_100_LIST.index("Flavio Cobolli") if "Flavio Cobolli" in TOP_100_LIST else 1)
+p1 = st.sidebar.selectbox("Joueur 1 (Serveur A)", TOP_100_ACTUEL, index=TOP_100_ACTUEL.index("Jannik Sinner") if "Jannik Sinner" in TOP_100_ACTUEL else 0)
+p2 = st.sidebar.selectbox("Joueur 2 (Serveur B)", TOP_100_ACTUEL, index=TOP_100_ACTUEL.index("Carlos Alcaraz") if "Carlos Alcaraz" in TOP_100_ACTUEL else 1)
 surf = st.sidebar.selectbox("Surface", ["Hard", "Clay", "Grass"])
 
 # Paramètres de précision
@@ -111,7 +113,7 @@ else:
 st.markdown("""
 ---
 **Méthodologie Pro :** 
-- Couverture complète du **Top 100 ATP**.
+- Intégration de la hiérarchie officielle du **Top 100 ATP**.
 - Calcul croisé : l'efficacité au service d'un joueur est pondérée par la **vulnérabilité au retour** de son adversaire.
 - Intégration d'un bonus dynamique basé sur la probabilité de **Tie-Break** et les conditions environnementales (Altitude/Chaleur).
 """)
